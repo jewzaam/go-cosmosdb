@@ -14,7 +14,7 @@ type Person struct {
 
 // People represents people
 type People struct {
-	Count      int      `json:"_count,omitempty"`
-	ResourceID string   `json:"_rid,omitempty"`
-	People     []Person `json:"Documents,omitempty"`
+	Count      int       `json:"_count,omitempty"`
+	ResourceID string    `json:"_rid,omitempty"`
+	People     []*Person `json:"Documents,omitempty"`
 }
