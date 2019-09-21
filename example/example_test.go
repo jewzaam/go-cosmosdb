@@ -27,17 +27,11 @@ func TestE2E(t *testing.T) {
 	}
 	t.Logf("%#v\n", db)
 
-	dbi := dbc.List()
-	for {
-		dbs, err := dbi.Next()
-		if err != nil {
-			t.Error(err)
-		}
-		if dbs == nil {
-			break
-		}
-		t.Logf("%#v\n", dbs)
+	dbs, err := dbc.All(dbc.List())
+	if err != nil {
+		t.Error(err)
 	}
+	t.Logf("%#v\n", dbs)
 
 	db, err = dbc.Get(dbid)
 	if err != nil {
@@ -60,17 +54,11 @@ func TestE2E(t *testing.T) {
 	}
 	t.Logf("%#v\n", coll)
 
-	colli := collc.List()
-	for {
-		colls, err := colli.Next()
-		if err != nil {
-			t.Error(err)
-		}
-		if colls == nil {
-			break
-		}
-		t.Logf("%#v\n", colls)
+	colls, err := collc.All(collc.List())
+	if err != nil {
+		t.Error(err)
 	}
+	t.Logf("%#v\n", colls)
 
 	coll, err = collc.Get(collid)
 	if err != nil {
@@ -95,17 +83,11 @@ func TestE2E(t *testing.T) {
 	}
 	t.Logf("%#v\n", doc)
 
-	doci := dc.List()
-	for {
-		docs, err := doci.Next()
-		if err != nil {
-			t.Error(err)
-		}
-		if docs == nil {
-			break
-		}
-		t.Logf("%#v\n", docs)
+	docs, err := dc.All(dc.List())
+	if err != nil {
+		t.Error(err)
 	}
+	t.Logf("%#v\n", docs)
 
 	doc, err = dc.Get(personid, personid)
 	if err != nil {
@@ -113,7 +95,7 @@ func TestE2E(t *testing.T) {
 	}
 	t.Logf("%#v\n", doc)
 
-	doci = dc.Query(&cosmosdb.Query{
+	docs, err = dc.All(dc.Query(&cosmosdb.Query{
 		Query: "SELECT * FROM people WHERE people.surname = @surname",
 		Parameters: []cosmosdb.Parameter{
 			{
@@ -121,17 +103,11 @@ func TestE2E(t *testing.T) {
 				Value: "Minter",
 			},
 		},
-	})
-	for {
-		docs, err := doci.Next()
-		if err != nil {
-			t.Error(err)
-		}
-		if docs == nil {
-			break
-		}
-		t.Logf("%#v\n", docs)
+	}))
+	if err != nil {
+		t.Error(err)
 	}
+	t.Logf("%#v\n", docs)
 
 	oldETag := doc.ETag
 	doc, err = dc.Replace(personid, &types.Person{

@@ -18,6 +18,7 @@ type personClient struct {
 type PersonClient interface {
 	Create(string, *pkg.Person) (*pkg.Person, error)
 	List() PersonIterator
+	All(PersonIterator) (*pkg.People, error)
 	Get(string, string) (*pkg.Person, error)
 	Replace(string, *pkg.Person) (*pkg.Person, error)
 	Delete(string, *pkg.Person) error
@@ -62,6 +63,26 @@ func (c *personClient) Create(partitionkey string, newperson *pkg.Person) (perso
 
 func (c *personClient) List() PersonIterator {
 	return &personListIterator{personClient: c}
+}
+
+func (c *personClient) All(i PersonIterator) (*pkg.People, error) {
+	allpeople := &pkg.People{}
+
+	for {
+		people, err := i.Next()
+		if err != nil {
+			return nil, err
+		}
+		if people == nil {
+			break
+		}
+
+		allpeople.Count += people.Count
+		allpeople.ResourceID = people.ResourceID
+		allpeople.People = append(allpeople.People, people.People...)
+	}
+
+	return allpeople, nil
 }
 
 func (c *personClient) Get(partitionkey, personid string) (person *pkg.Person, err error) {
