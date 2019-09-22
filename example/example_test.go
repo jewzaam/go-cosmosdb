@@ -27,7 +27,7 @@ func TestE2E(t *testing.T) {
 	}
 	t.Logf("%#v\n", db)
 
-	dbs, err := dbc.All(dbc.List())
+	dbs, err := dbc.ListAll()
 	if err != nil {
 		t.Error(err)
 	}
@@ -54,7 +54,7 @@ func TestE2E(t *testing.T) {
 	}
 	t.Logf("%#v\n", coll)
 
-	colls, err := collc.All(collc.List())
+	colls, err := collc.ListAll()
 	if err != nil {
 		t.Error(err)
 	}
@@ -83,7 +83,7 @@ func TestE2E(t *testing.T) {
 	}
 	t.Logf("%#v\n", doc)
 
-	docs, err := dc.All(dc.List())
+	docs, err := dc.ListAll()
 	if err != nil {
 		t.Error(err)
 	}
@@ -95,7 +95,7 @@ func TestE2E(t *testing.T) {
 	}
 	t.Logf("%#v\n", doc)
 
-	docs, err = dc.All(dc.Query(&cosmosdb.Query{
+	docs, err = dc.QueryAll(&cosmosdb.Query{
 		Query: "SELECT * FROM people WHERE people.surname = @surname",
 		Parameters: []cosmosdb.Parameter{
 			{
@@ -103,7 +103,7 @@ func TestE2E(t *testing.T) {
 				Value: "Minter",
 			},
 		},
-	}))
+	})
 	if err != nil {
 		t.Error(err)
 	}

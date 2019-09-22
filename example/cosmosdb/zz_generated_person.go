@@ -18,11 +18,12 @@ type personClient struct {
 type PersonClient interface {
 	Create(string, *pkg.Person) (*pkg.Person, error)
 	List() PersonIterator
-	All(PersonIterator) (*pkg.People, error)
+	ListAll() (*pkg.People, error)
 	Get(string, string) (*pkg.Person, error)
 	Replace(string, *pkg.Person) (*pkg.Person, error)
 	Delete(string, *pkg.Person) error
 	Query(*Query) PersonIterator
+	QueryAll(*Query) (*pkg.People, error)
 }
 
 type personListIterator struct {
@@ -52,20 +53,7 @@ func NewPersonClient(collc CollectionClient, collid string, isPartitioned bool) 
 	}
 }
 
-func (c *personClient) Create(partitionkey string, newperson *pkg.Person) (person *pkg.Person, err error) {
-	headers := http.Header{}
-	if partitionkey != "" {
-		headers.Set("X-Ms-Documentdb-Partitionkey", `["`+partitionkey+`"]`)
-	}
-	err = c.do(http.MethodPost, c.path+"/docs", "docs", c.path, http.StatusCreated, &newperson, &person, headers)
-	return
-}
-
-func (c *personClient) List() PersonIterator {
-	return &personListIterator{personClient: c}
-}
-
-func (c *personClient) All(i PersonIterator) (*pkg.People, error) {
+func (c *personClient) all(i PersonIterator) (*pkg.People, error) {
 	allpeople := &pkg.People{}
 
 	for {
@@ -83,6 +71,23 @@ func (c *personClient) All(i PersonIterator) (*pkg.People, error) {
 	}
 
 	return allpeople, nil
+}
+
+func (c *personClient) Create(partitionkey string, newperson *pkg.Person) (person *pkg.Person, err error) {
+	headers := http.Header{}
+	if partitionkey != "" {
+		headers.Set("X-Ms-Documentdb-Partitionkey", `["`+partitionkey+`"]`)
+	}
+	err = c.do(http.MethodPost, c.path+"/docs", "docs", c.path, http.StatusCreated, &newperson, &person, headers)
+	return
+}
+
+func (c *personClient) List() PersonIterator {
+	return &personListIterator{personClient: c}
+}
+
+func (c *personClient) ListAll() (*pkg.People, error) {
+	return c.all(c.List())
 }
 
 func (c *personClient) Get(partitionkey, personid string) (person *pkg.Person, err error) {
@@ -121,6 +126,10 @@ func (c *personClient) Delete(partitionkey string, person *pkg.Person) error {
 
 func (c *personClient) Query(query *Query) PersonIterator {
 	return &personQueryIterator{personClient: c, query: query}
+}
+
+func (c *personClient) QueryAll(query *Query) (*pkg.People, error) {
+	return c.all(c.Query(query))
 }
 
 func (i *personListIterator) Next() (people *pkg.People, err error) {
