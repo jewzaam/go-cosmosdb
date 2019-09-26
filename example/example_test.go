@@ -72,7 +72,7 @@ func TestE2E(t *testing.T) {
 	}
 	t.Logf("%#v\n", pkrs)
 
-	dc := cosmosdb.NewPersonClient(collc, collid, true)
+	dc := cosmosdb.NewPersonClient(collc, collid)
 
 	doc, err := dc.Create(personid, &types.Person{
 		ID:      personid,
@@ -95,7 +95,7 @@ func TestE2E(t *testing.T) {
 	}
 	t.Logf("%#v\n", doc)
 
-	docs, err = dc.QueryAll(&cosmosdb.Query{
+	docs, err = dc.QueryAll(personid, &cosmosdb.Query{
 		Query: "SELECT * FROM people WHERE people.surname = @surname",
 		Parameters: []cosmosdb.Parameter{
 			{

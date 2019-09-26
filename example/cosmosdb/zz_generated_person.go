@@ -10,8 +10,7 @@ import (
 
 type personClient struct {
 	*databaseClient
-	path          string
-	isPartitioned bool
+	path string
 }
 
 // PersonClient is a person client
@@ -22,8 +21,8 @@ type PersonClient interface {
 	Get(string, string) (*pkg.Person, error)
 	Replace(string, *pkg.Person) (*pkg.Person, error)
 	Delete(string, *pkg.Person) error
-	Query(*Query) PersonIterator
-	QueryAll(*Query) (*pkg.People, error)
+	Query(string, *Query) PersonIterator
+	QueryAll(string, *Query) (*pkg.People, error)
 }
 
 type personListIterator struct {
@@ -34,6 +33,7 @@ type personListIterator struct {
 
 type personQueryIterator struct {
 	*personClient
+	partitionkey string
 	query        *Query
 	continuation string
 	done         bool
@@ -45,11 +45,10 @@ type PersonIterator interface {
 }
 
 // NewPersonClient returns a new person client
-func NewPersonClient(collc CollectionClient, collid string, isPartitioned bool) PersonClient {
+func NewPersonClient(collc CollectionClient, collid string) PersonClient {
 	return &personClient{
 		databaseClient: collc.(*collectionClient).databaseClient,
 		path:           collc.(*collectionClient).path + "/colls/" + collid,
-		isPartitioned:  isPartitioned,
 	}
 }
 
@@ -124,12 +123,12 @@ func (c *personClient) Delete(partitionkey string, person *pkg.Person) error {
 	return c.do(http.MethodDelete, c.path+"/docs/"+person.ID, "docs", c.path+"/docs/"+person.ID, http.StatusNoContent, nil, nil, headers)
 }
 
-func (c *personClient) Query(query *Query) PersonIterator {
-	return &personQueryIterator{personClient: c, query: query}
+func (c *personClient) Query(partitionkey string, query *Query) PersonIterator {
+	return &personQueryIterator{personClient: c, partitionkey: partitionkey, query: query}
 }
 
-func (c *personClient) QueryAll(query *Query) (*pkg.People, error) {
-	return c.all(c.Query(query))
+func (c *personClient) QueryAll(partitionkey string, query *Query) (*pkg.People, error) {
+	return c.all(c.Query(partitionkey, query))
 }
 
 func (i *personListIterator) Next() (people *pkg.People, err error) {
@@ -161,7 +160,9 @@ func (i *personQueryIterator) Next() (people *pkg.People, err error) {
 	headers := http.Header{}
 	headers.Set("X-Ms-Documentdb-Isquery", "True")
 	headers.Set("Content-Type", "application/query+json")
-	if i.isPartitioned {
+	if i.partitionkey != "" {
+		headers.Set("X-Ms-Documentdb-Partitionkey", `["`+i.partitionkey+`"]`)
+	} else {
 		headers.Set("X-Ms-Documentdb-Query-Enablecrosspartition", "True")
 	}
 	if i.continuation != "" {
