@@ -16,7 +16,17 @@ const (
 )
 
 func TestE2E(t *testing.T) {
-	dbc, err := cosmosdb.NewDatabaseClient(http.DefaultClient, os.Getenv("DATABASE_ACCOUNT"), os.Getenv("MASTER_KEY"))
+	account, found := os.LookupEnv("COSMOSDB_ACCOUNT")
+	if !found {
+		t.Fatal("must set COSMOSDB_ACCOUNT")
+	}
+
+	key, found := os.LookupEnv("COSMOSDB_KEY")
+	if !found {
+		t.Fatal("must set COSMOSDB_KEY")
+	}
+
+	dbc, err := cosmosdb.NewDatabaseClient(http.DefaultClient, account, key)
 	if err != nil {
 		t.Fatal(err)
 	}
