@@ -10,9 +10,10 @@ import (
 )
 
 const (
-	dbid     = "testdb"
-	collid   = "people"
-	personid = "jim"
+	dbid      = "testdb"
+	collid    = "people"
+	triggerid = "trigger"
+	personid  = "jim"
 )
 
 func TestE2E(t *testing.T) {
@@ -82,6 +83,31 @@ func TestE2E(t *testing.T) {
 	}
 	t.Logf("%#v\n", pkrs)
 
+	triggerc := cosmosdb.NewTriggerClient(collc, collid)
+
+	trigger, err := triggerc.Create(&cosmosdb.Trigger{
+		ID:               triggerid,
+		TriggerOperation: cosmosdb.TriggerOperationAll,
+		TriggerType:      cosmosdb.TriggerTypePre,
+		Body:             "function trigger() {}",
+	})
+	if err != nil {
+		t.Error(err)
+	}
+	t.Logf("%#v\n", trigger)
+
+	triggers, err := triggerc.ListAll()
+	if err != nil {
+		t.Error(err)
+	}
+	t.Logf("%#v\n", triggers)
+
+	trigger, err = triggerc.Get(triggerid)
+	if err != nil {
+		t.Error(err)
+	}
+	t.Logf("%#v\n", trigger)
+
 	dc := cosmosdb.NewPersonClient(collc, collid)
 
 	doc, err := dc.Create(personid, &types.Person{
@@ -140,6 +166,11 @@ func TestE2E(t *testing.T) {
 	}
 
 	err = dc.Delete(personid, doc)
+	if err != nil {
+		t.Error(err)
+	}
+
+	err = triggerc.Delete(trigger)
 	if err != nil {
 		t.Error(err)
 	}
