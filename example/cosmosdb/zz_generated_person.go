@@ -15,12 +15,12 @@ type personClient struct {
 
 // PersonClient is a person client
 type PersonClient interface {
-	Create(string, *pkg.Person) (*pkg.Person, error)
+	Create(string, *pkg.Person, *Options) (*pkg.Person, error)
 	List() PersonIterator
 	ListAll() (*pkg.People, error)
 	Get(string, string) (*pkg.Person, error)
-	Replace(string, *pkg.Person) (*pkg.Person, error)
-	Delete(string, *pkg.Person) error
+	Replace(string, *pkg.Person, *Options) (*pkg.Person, error)
+	Delete(string, *pkg.Person, *Options) error
 	Query(string, *Query) PersonIterator
 	QueryAll(string, *Query) (*pkg.People, error)
 }
@@ -72,9 +72,12 @@ func (c *personClient) all(i PersonIterator) (*pkg.People, error) {
 	return allpeople, nil
 }
 
-func (c *personClient) Create(partitionkey string, newperson *pkg.Person) (person *pkg.Person, err error) {
+func (c *personClient) Create(partitionkey string, newperson *pkg.Person, options *Options) (person *pkg.Person, err error) {
 	headers := http.Header{}
 	headers.Set("X-Ms-Documentdb-Partitionkey", `["`+partitionkey+`"]`)
+	if options != nil {
+		setOptions(options, headers)
+	}
 	err = c.do(http.MethodPost, c.path+"/docs", "docs", c.path, http.StatusCreated, &newperson, &person, headers)
 	return
 }
@@ -94,24 +97,30 @@ func (c *personClient) Get(partitionkey, personid string) (person *pkg.Person, e
 	return
 }
 
-func (c *personClient) Replace(partitionkey string, newperson *pkg.Person) (person *pkg.Person, err error) {
+func (c *personClient) Replace(partitionkey string, newperson *pkg.Person, options *Options) (person *pkg.Person, err error) {
 	if newperson.ETag == "" {
 		return nil, ErrETagRequired
 	}
 	headers := http.Header{}
 	headers.Set("If-Match", newperson.ETag)
 	headers.Set("X-Ms-Documentdb-Partitionkey", `["`+partitionkey+`"]`)
+	if options != nil {
+		setOptions(options, headers)
+	}
 	err = c.do(http.MethodPut, c.path+"/docs/"+newperson.ID, "docs", c.path+"/docs/"+newperson.ID, http.StatusOK, &newperson, &person, headers)
 	return
 }
 
-func (c *personClient) Delete(partitionkey string, person *pkg.Person) error {
+func (c *personClient) Delete(partitionkey string, person *pkg.Person, options *Options) error {
 	if person.ETag == "" {
 		return ErrETagRequired
 	}
 	headers := http.Header{}
 	headers.Set("If-Match", person.ETag)
 	headers.Set("X-Ms-Documentdb-Partitionkey", `["`+partitionkey+`"]`)
+	if options != nil {
+		setOptions(options, headers)
+	}
 	return c.do(http.MethodDelete, c.path+"/docs/"+person.ID, "docs", c.path+"/docs/"+person.ID, http.StatusNoContent, nil, nil, headers)
 }
 

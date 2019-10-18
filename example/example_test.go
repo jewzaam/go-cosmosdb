@@ -14,6 +14,14 @@ const (
 	collid    = "people"
 	triggerid = "trigger"
 	personid  = "jim"
+
+	triggerbody = `function trigger() {
+	var request = getContext().getRequest();
+	var body = request.getBody();
+	var ts = new Date();
+	body["updateTime"] = ts.getTime();
+	request.setBody(body);
+}`
 )
 
 func TestE2E(t *testing.T) {
@@ -89,7 +97,7 @@ func TestE2E(t *testing.T) {
 		ID:               triggerid,
 		TriggerOperation: cosmosdb.TriggerOperationAll,
 		TriggerType:      cosmosdb.TriggerTypePre,
-		Body:             "function trigger() {}",
+		Body:             triggerbody,
 	})
 	if err != nil {
 		t.Error(err)
@@ -113,7 +121,7 @@ func TestE2E(t *testing.T) {
 	doc, err := dc.Create(personid, &types.Person{
 		ID:      personid,
 		Surname: "Minter",
-	})
+	}, &cosmosdb.Options{PreTriggers: []string{triggerid}})
 	if err != nil {
 		t.Error(err)
 	}
@@ -150,7 +158,7 @@ func TestE2E(t *testing.T) {
 		ID:      personid,
 		ETag:    doc.ETag,
 		Surname: "Morrison",
-	})
+	}, &cosmosdb.Options{PreTriggers: []string{triggerid}})
 	if err != nil {
 		t.Error(err)
 	}
@@ -160,12 +168,12 @@ func TestE2E(t *testing.T) {
 		ID:      personid,
 		ETag:    oldETag,
 		Surname: "Henson",
-	})
+	}, &cosmosdb.Options{PreTriggers: []string{triggerid}})
 	if !cosmosdb.IsErrorStatusCode(err, http.StatusPreconditionFailed) {
 		t.Error(err)
 	}
 
-	err = dc.Delete(personid, doc)
+	err = dc.Delete(personid, doc, nil)
 	if err != nil {
 		t.Error(err)
 	}

@@ -9,7 +9,8 @@ type Person struct {
 	ETag        string `json:"_etag,omitempty"`
 	Attachments string `json:"_attachments,omitempty"`
 
-	Surname string `json:"surname,omitempty"`
+	Surname    string `json:"surname,omitempty"`
+	UpdateTime string `json:"updateTime,omitempty"`
 }
 
 // People represents people
