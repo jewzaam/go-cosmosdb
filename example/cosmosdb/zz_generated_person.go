@@ -74,9 +74,7 @@ func (c *personClient) all(i PersonIterator) (*pkg.People, error) {
 
 func (c *personClient) Create(partitionkey string, newperson *pkg.Person) (person *pkg.Person, err error) {
 	headers := http.Header{}
-	if partitionkey != "" {
-		headers.Set("X-Ms-Documentdb-Partitionkey", `["`+partitionkey+`"]`)
-	}
+	headers.Set("X-Ms-Documentdb-Partitionkey", `["`+partitionkey+`"]`)
 	err = c.do(http.MethodPost, c.path+"/docs", "docs", c.path, http.StatusCreated, &newperson, &person, headers)
 	return
 }
@@ -91,9 +89,7 @@ func (c *personClient) ListAll() (*pkg.People, error) {
 
 func (c *personClient) Get(partitionkey, personid string) (person *pkg.Person, err error) {
 	headers := http.Header{}
-	if partitionkey != "" {
-		headers.Set("X-Ms-Documentdb-Partitionkey", `["`+partitionkey+`"]`)
-	}
+	headers.Set("X-Ms-Documentdb-Partitionkey", `["`+partitionkey+`"]`)
 	err = c.do(http.MethodGet, c.path+"/docs/"+personid, "docs", c.path+"/docs/"+personid, http.StatusOK, nil, &person, headers)
 	return
 }
@@ -104,9 +100,7 @@ func (c *personClient) Replace(partitionkey string, newperson *pkg.Person) (pers
 	}
 	headers := http.Header{}
 	headers.Set("If-Match", newperson.ETag)
-	if partitionkey != "" {
-		headers.Set("X-Ms-Documentdb-Partitionkey", `["`+partitionkey+`"]`)
-	}
+	headers.Set("X-Ms-Documentdb-Partitionkey", `["`+partitionkey+`"]`)
 	err = c.do(http.MethodPut, c.path+"/docs/"+newperson.ID, "docs", c.path+"/docs/"+newperson.ID, http.StatusOK, &newperson, &person, headers)
 	return
 }
@@ -117,9 +111,7 @@ func (c *personClient) Delete(partitionkey string, person *pkg.Person) error {
 	}
 	headers := http.Header{}
 	headers.Set("If-Match", person.ETag)
-	if partitionkey != "" {
-		headers.Set("X-Ms-Documentdb-Partitionkey", `["`+partitionkey+`"]`)
-	}
+	headers.Set("X-Ms-Documentdb-Partitionkey", `["`+partitionkey+`"]`)
 	return c.do(http.MethodDelete, c.path+"/docs/"+person.ID, "docs", c.path+"/docs/"+person.ID, http.StatusNoContent, nil, nil, headers)
 }
 
