@@ -4,6 +4,7 @@ package cosmosdb
 
 import (
 	"net/http"
+	"strings"
 
 	pkg "github.com/jim-minter/go-cosmosdb/example/types"
 )
@@ -75,9 +76,17 @@ func (c *personClient) all(i PersonIterator) (*pkg.People, error) {
 func (c *personClient) Create(partitionkey string, newperson *pkg.Person, options *Options) (person *pkg.Person, err error) {
 	headers := http.Header{}
 	headers.Set("X-Ms-Documentdb-Partitionkey", `["`+partitionkey+`"]`)
-	if options != nil {
-		setOptions(options, headers)
+
+	if options == nil {
+		options = &Options{}
 	}
+	options.NoETag = true
+
+	err = c.setOptions(options, newperson, headers)
+	if err != nil {
+		return
+	}
+
 	err = c.do(http.MethodPost, c.path+"/docs", "docs", c.path, http.StatusCreated, &newperson, &person, headers)
 	return
 }
@@ -98,30 +107,29 @@ func (c *personClient) Get(partitionkey, personid string) (person *pkg.Person, e
 }
 
 func (c *personClient) Replace(partitionkey string, newperson *pkg.Person, options *Options) (person *pkg.Person, err error) {
-	if newperson.ETag == "" {
-		return nil, ErrETagRequired
-	}
 	headers := http.Header{}
-	headers.Set("If-Match", newperson.ETag)
 	headers.Set("X-Ms-Documentdb-Partitionkey", `["`+partitionkey+`"]`)
-	if options != nil {
-		setOptions(options, headers)
+
+	err = c.setOptions(options, person, headers)
+	if err != nil {
+		return
 	}
+
 	err = c.do(http.MethodPut, c.path+"/docs/"+newperson.ID, "docs", c.path+"/docs/"+newperson.ID, http.StatusOK, &newperson, &person, headers)
 	return
 }
 
-func (c *personClient) Delete(partitionkey string, person *pkg.Person, options *Options) error {
-	if person.ETag == "" {
-		return ErrETagRequired
-	}
+func (c *personClient) Delete(partitionkey string, person *pkg.Person, options *Options) (err error) {
 	headers := http.Header{}
-	headers.Set("If-Match", person.ETag)
 	headers.Set("X-Ms-Documentdb-Partitionkey", `["`+partitionkey+`"]`)
-	if options != nil {
-		setOptions(options, headers)
+
+	err = c.setOptions(options, person, headers)
+	if err != nil {
+		return
 	}
-	return c.do(http.MethodDelete, c.path+"/docs/"+person.ID, "docs", c.path+"/docs/"+person.ID, http.StatusNoContent, nil, nil, headers)
+
+	err = c.do(http.MethodDelete, c.path+"/docs/"+person.ID, "docs", c.path+"/docs/"+person.ID, http.StatusNoContent, nil, nil, headers)
+	return
 }
 
 func (c *personClient) Query(partitionkey string, query *Query) PersonIterator {
@@ -130,6 +138,27 @@ func (c *personClient) Query(partitionkey string, query *Query) PersonIterator {
 
 func (c *personClient) QueryAll(partitionkey string, query *Query) (*pkg.People, error) {
 	return c.all(c.Query(partitionkey, query))
+}
+
+func (c *personClient) setOptions(options *Options, person *pkg.Person, headers http.Header) error {
+	if options == nil {
+		return nil
+	}
+
+	if !options.NoETag {
+		if person.ETag == "" {
+			return ErrETagRequired
+		}
+		headers.Set("If-Match", person.ETag)
+	}
+	if len(options.PreTriggers) > 0 {
+		headers.Set("X-Ms-Documentdb-Pre-Trigger-Include", strings.Join(options.PreTriggers, ","))
+	}
+	if len(options.PostTriggers) > 0 {
+		headers.Set("X-Ms-Documentdb-Post-Trigger-Include", strings.Join(options.PostTriggers, ","))
+	}
+
+	return nil
 }
 
 func (i *personListIterator) Next() (people *pkg.People, err error) {
