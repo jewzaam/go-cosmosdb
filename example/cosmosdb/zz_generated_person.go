@@ -110,7 +110,7 @@ func (c *personClient) Replace(partitionkey string, newperson *pkg.Person, optio
 	headers := http.Header{}
 	headers.Set("X-Ms-Documentdb-Partitionkey", `["`+partitionkey+`"]`)
 
-	err = c.setOptions(options, person, headers)
+	err = c.setOptions(options, newperson, headers)
 	if err != nil {
 		return
 	}
