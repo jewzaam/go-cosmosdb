@@ -5,6 +5,8 @@ import (
 	"os"
 	"testing"
 
+	"github.com/ugorji/go/codec"
+
 	"github.com/jim-minter/go-cosmosdb/example/cosmosdb"
 	"github.com/jim-minter/go-cosmosdb/example/types"
 )
@@ -35,7 +37,15 @@ func TestE2E(t *testing.T) {
 		t.Fatal("must set COSMOSDB_KEY")
 	}
 
-	dbc, err := cosmosdb.NewDatabaseClient(http.DefaultClient, account, key)
+	jsonHandle := &codec.JsonHandle{
+		BasicHandle: codec.BasicHandle{
+			DecodeOptions: codec.DecodeOptions{
+				ErrorIfNoField: true,
+			},
+		},
+	}
+
+	dbc, err := cosmosdb.NewDatabaseClient(http.DefaultClient, jsonHandle, account, key)
 	if err != nil {
 		t.Fatal(err)
 	}
