@@ -1,6 +1,7 @@
 package example
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"testing"
@@ -27,6 +28,8 @@ const (
 )
 
 func TestE2E(t *testing.T) {
+	ctx := context.Background()
+
 	account, found := os.LookupEnv("COSMOSDB_ACCOUNT")
 	if !found {
 		t.Fatal("must set COSMOSDB_ACCOUNT")
@@ -50,19 +53,19 @@ func TestE2E(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	db, err := dbc.Create(&cosmosdb.Database{ID: dbid})
+	db, err := dbc.Create(ctx, &cosmosdb.Database{ID: dbid})
 	if err != nil {
 		t.Error(err)
 	}
 	t.Logf("%#v\n", db)
 
-	dbs, err := dbc.ListAll()
+	dbs, err := dbc.ListAll(ctx)
 	if err != nil {
 		t.Error(err)
 	}
 	t.Logf("%#v\n", dbs)
 
-	db, err = dbc.Get(dbid)
+	db, err = dbc.Get(ctx, dbid)
 	if err != nil {
 		t.Error(err)
 	}
@@ -70,7 +73,7 @@ func TestE2E(t *testing.T) {
 
 	collc := cosmosdb.NewCollectionClient(dbc, dbid)
 
-	coll, err := collc.Create(&cosmosdb.Collection{
+	coll, err := collc.Create(ctx, &cosmosdb.Collection{
 		ID: collid,
 		PartitionKey: &cosmosdb.PartitionKey{
 			Paths: []string{
@@ -83,19 +86,19 @@ func TestE2E(t *testing.T) {
 	}
 	t.Logf("%#v\n", coll)
 
-	colls, err := collc.ListAll()
+	colls, err := collc.ListAll(ctx)
 	if err != nil {
 		t.Error(err)
 	}
 	t.Logf("%#v\n", colls)
 
-	coll, err = collc.Get(collid)
+	coll, err = collc.Get(ctx, collid)
 	if err != nil {
 		t.Error(err)
 	}
 	t.Logf("%#v\n", coll)
 
-	pkrs, err := collc.PartitionKeyRanges(collid)
+	pkrs, err := collc.PartitionKeyRanges(ctx, collid)
 	if err != nil {
 		t.Error(err)
 	}
@@ -103,7 +106,7 @@ func TestE2E(t *testing.T) {
 
 	triggerc := cosmosdb.NewTriggerClient(collc, collid)
 
-	trigger, err := triggerc.Create(&cosmosdb.Trigger{
+	trigger, err := triggerc.Create(ctx, &cosmosdb.Trigger{
 		ID:               triggerid,
 		TriggerOperation: cosmosdb.TriggerOperationAll,
 		TriggerType:      cosmosdb.TriggerTypePre,
@@ -114,13 +117,13 @@ func TestE2E(t *testing.T) {
 	}
 	t.Logf("%#v\n", trigger)
 
-	triggers, err := triggerc.ListAll()
+	triggers, err := triggerc.ListAll(ctx)
 	if err != nil {
 		t.Error(err)
 	}
 	t.Logf("%#v\n", triggers)
 
-	trigger, err = triggerc.Get(triggerid)
+	trigger, err = triggerc.Get(ctx, triggerid)
 	if err != nil {
 		t.Error(err)
 	}
@@ -128,7 +131,7 @@ func TestE2E(t *testing.T) {
 
 	dc := cosmosdb.NewPersonClient(collc, collid)
 
-	doc, err := dc.Create(personid, &types.Person{
+	doc, err := dc.Create(ctx, personid, &types.Person{
 		ID:      personid,
 		Surname: "Minter",
 	}, &cosmosdb.Options{PreTriggers: []string{triggerid}})
@@ -137,19 +140,19 @@ func TestE2E(t *testing.T) {
 	}
 	t.Logf("%#v\n", doc)
 
-	docs, err := dc.ListAll()
+	docs, err := dc.ListAll(ctx)
 	if err != nil {
 		t.Error(err)
 	}
 	t.Logf("%#v\n", docs)
 
-	doc, err = dc.Get(personid, personid)
+	doc, err = dc.Get(ctx, personid, personid)
 	if err != nil {
 		t.Error(err)
 	}
 	t.Logf("%#v\n", doc)
 
-	docs, err = dc.QueryAll(personid, &cosmosdb.Query{
+	docs, err = dc.QueryAll(ctx, personid, &cosmosdb.Query{
 		Query: "SELECT * FROM people WHERE people.surname = @surname",
 		Parameters: []cosmosdb.Parameter{
 			{
@@ -164,7 +167,7 @@ func TestE2E(t *testing.T) {
 	t.Logf("%#v\n", docs)
 
 	oldETag := doc.ETag
-	doc, err = dc.Replace(personid, &types.Person{
+	doc, err = dc.Replace(ctx, personid, &types.Person{
 		ID:      personid,
 		ETag:    doc.ETag,
 		Surname: "Morrison",
@@ -174,7 +177,7 @@ func TestE2E(t *testing.T) {
 	}
 	t.Logf("%#v\n", doc)
 
-	_, err = dc.Replace(personid, &types.Person{
+	_, err = dc.Replace(ctx, personid, &types.Person{
 		ID:      personid,
 		ETag:    oldETag,
 		Surname: "Henson",
@@ -183,22 +186,22 @@ func TestE2E(t *testing.T) {
 		t.Error(err)
 	}
 
-	err = dc.Delete(personid, doc, nil)
+	err = dc.Delete(ctx, personid, doc, nil)
 	if err != nil {
 		t.Error(err)
 	}
 
-	err = triggerc.Delete(trigger)
+	err = triggerc.Delete(ctx, trigger)
 	if err != nil {
 		t.Error(err)
 	}
 
-	err = collc.Delete(coll)
+	err = collc.Delete(ctx, coll)
 	if err != nil {
 		t.Error(err)
 	}
 
-	err = dbc.Delete(db)
+	err = dbc.Delete(ctx, db)
 	if err != nil {
 		t.Error(err)
 	}
