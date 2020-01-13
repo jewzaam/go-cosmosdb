@@ -18,19 +18,20 @@ type personClient struct {
 // PersonClient is a person client
 type PersonClient interface {
 	Create(context.Context, string, *pkg.Person, *Options) (*pkg.Person, error)
-	List() PersonIterator
-	ListAll(context.Context) (*pkg.People, error)
-	Get(context.Context, string, string) (*pkg.Person, error)
+	List(*Options) PersonIterator
+	ListAll(context.Context, *Options) (*pkg.People, error)
+	Get(context.Context, string, string, *Options) (*pkg.Person, error)
 	Replace(context.Context, string, *pkg.Person, *Options) (*pkg.Person, error)
 	Delete(context.Context, string, *pkg.Person, *Options) error
-	Query(string, *Query) PersonIterator
-	QueryAll(context.Context, string, *Query) (*pkg.People, error)
+	Query(string, *Query, *Options) PersonIterator
+	QueryAll(context.Context, string, *Query, *Options) (*pkg.People, error)
 }
 
 type personListIterator struct {
 	*personClient
 	continuation string
 	done         bool
+	options      *Options
 }
 
 type personQueryIterator struct {
@@ -39,11 +40,13 @@ type personQueryIterator struct {
 	query        *Query
 	continuation string
 	done         bool
+	options      *Options
 }
 
 // PersonIterator is a person iterator
 type PersonIterator interface {
 	Next(context.Context) (*pkg.People, error)
+	NextRaw(context.Context, interface{}) error
 }
 
 // NewPersonClient returns a new person client
@@ -92,17 +95,23 @@ func (c *personClient) Create(ctx context.Context, partitionkey string, newperso
 	return
 }
 
-func (c *personClient) List() PersonIterator {
-	return &personListIterator{personClient: c}
+func (c *personClient) List(options *Options) PersonIterator {
+	return &personListIterator{personClient: c, options: options}
 }
 
-func (c *personClient) ListAll(ctx context.Context) (*pkg.People, error) {
-	return c.all(ctx, c.List())
+func (c *personClient) ListAll(ctx context.Context, options *Options) (*pkg.People, error) {
+	return c.all(ctx, c.List(options))
 }
 
-func (c *personClient) Get(ctx context.Context, partitionkey, personid string) (person *pkg.Person, err error) {
+func (c *personClient) Get(ctx context.Context, partitionkey, personid string, options *Options) (person *pkg.Person, err error) {
 	headers := http.Header{}
 	headers.Set("X-Ms-Documentdb-Partitionkey", `["`+partitionkey+`"]`)
+
+	err = c.setOptions(options, nil, headers)
+	if err != nil {
+		return
+	}
+
 	err = c.do(ctx, http.MethodGet, c.path+"/docs/"+personid, "docs", c.path+"/docs/"+personid, http.StatusOK, nil, &person, headers)
 	return
 }
@@ -133,12 +142,12 @@ func (c *personClient) Delete(ctx context.Context, partitionkey string, person *
 	return
 }
 
-func (c *personClient) Query(partitionkey string, query *Query) PersonIterator {
-	return &personQueryIterator{personClient: c, partitionkey: partitionkey, query: query}
+func (c *personClient) Query(partitionkey string, query *Query, options *Options) PersonIterator {
+	return &personQueryIterator{personClient: c, partitionkey: partitionkey, query: query, options: options}
 }
 
-func (c *personClient) QueryAll(ctx context.Context, partitionkey string, query *Query) (*pkg.People, error) {
-	return c.all(ctx, c.Query(partitionkey, query))
+func (c *personClient) QueryAll(ctx context.Context, partitionkey string, query *Query, options *Options) (*pkg.People, error) {
+	return c.all(ctx, c.Query(partitionkey, query, options))
 }
 
 func (c *personClient) setOptions(options *Options, person *pkg.Person, headers http.Header) error {
@@ -146,7 +155,7 @@ func (c *personClient) setOptions(options *Options, person *pkg.Person, headers 
 		return nil
 	}
 
-	if !options.NoETag {
+	if person != nil && !options.NoETag {
 		if person.ETag == "" {
 			return ErrETagRequired
 		}
@@ -158,11 +167,19 @@ func (c *personClient) setOptions(options *Options, person *pkg.Person, headers 
 	if len(options.PostTriggers) > 0 {
 		headers.Set("X-Ms-Documentdb-Post-Trigger-Include", strings.Join(options.PostTriggers, ","))
 	}
+	if len(options.PartitionKeyRangeID) > 0 {
+		headers.Set("X-Ms-Documentdb-PartitionKeyRangeID", options.PartitionKeyRangeID)
+	}
 
 	return nil
 }
 
 func (i *personListIterator) Next(ctx context.Context) (people *pkg.People, err error) {
+	err = i.NextRaw(ctx, &people)
+	return
+}
+
+func (i *personListIterator) NextRaw(ctx context.Context, raw interface{}) (err error) {
 	if i.done {
 		return
 	}
@@ -173,7 +190,12 @@ func (i *personListIterator) Next(ctx context.Context) (people *pkg.People, err 
 		headers.Set("X-Ms-Continuation", i.continuation)
 	}
 
-	err = i.do(ctx, http.MethodGet, i.path+"/docs", "docs", i.path, http.StatusOK, nil, &people, headers)
+	err = i.setOptions(i.options, nil, headers)
+	if err != nil {
+		return
+	}
+
+	err = i.do(ctx, http.MethodGet, i.path+"/docs", "docs", i.path, http.StatusOK, nil, &raw, headers)
 	if err != nil {
 		return
 	}
@@ -185,6 +207,11 @@ func (i *personListIterator) Next(ctx context.Context) (people *pkg.People, err 
 }
 
 func (i *personQueryIterator) Next(ctx context.Context) (people *pkg.People, err error) {
+	err = i.NextRaw(ctx, &people)
+	return
+}
+
+func (i *personQueryIterator) NextRaw(ctx context.Context, raw interface{}) (err error) {
 	if i.done {
 		return
 	}
@@ -202,7 +229,12 @@ func (i *personQueryIterator) Next(ctx context.Context) (people *pkg.People, err
 		headers.Set("X-Ms-Continuation", i.continuation)
 	}
 
-	err = i.do(ctx, http.MethodPost, i.path+"/docs", "docs", i.path, http.StatusOK, &i.query, &people, headers)
+	err = i.setOptions(i.options, nil, headers)
+	if err != nil {
+		return
+	}
+
+	err = i.do(ctx, http.MethodPost, i.path+"/docs", "docs", i.path, http.StatusOK, &i.query, &raw, headers)
 	if err != nil {
 		return
 	}
