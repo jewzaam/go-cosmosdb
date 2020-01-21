@@ -95,7 +95,7 @@ func (c *databaseClient) do(ctx context.Context, method, path, resourceType, res
 		time.Sleep(time.Duration(ms) * time.Millisecond)
 	}
 
-	if headers != nil {
+	if resp != nil && headers != nil {
 		for k := range headers {
 			delete(headers, k)
 		}

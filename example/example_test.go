@@ -6,6 +6,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/sirupsen/logrus"
 	"github.com/ugorji/go/codec"
 
 	"github.com/jim-minter/go-cosmosdb/example/cosmosdb"
@@ -29,6 +30,7 @@ const (
 
 func TestE2E(t *testing.T) {
 	ctx := context.Background()
+	log := logrus.NewEntry(logrus.StandardLogger())
 
 	account, found := os.LookupEnv("COSMOSDB_ACCOUNT")
 	if !found {
@@ -48,7 +50,7 @@ func TestE2E(t *testing.T) {
 		},
 	}
 
-	dbc, err := cosmosdb.NewDatabaseClient(http.DefaultClient, jsonHandle, account, key)
+	dbc, err := cosmosdb.NewDatabaseClient(log, http.DefaultClient, jsonHandle, account, key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,13 +142,13 @@ func TestE2E(t *testing.T) {
 	}
 	t.Logf("%#v\n", doc)
 
-	docs, err := dc.ListAll(ctx)
+	docs, err := dc.ListAll(ctx, nil)
 	if err != nil {
 		t.Error(err)
 	}
 	t.Logf("%#v\n", docs)
 
-	doc, err = dc.Get(ctx, personid, personid)
+	doc, err = dc.Get(ctx, personid, personid, nil)
 	if err != nil {
 		t.Error(err)
 	}
@@ -160,7 +162,7 @@ func TestE2E(t *testing.T) {
 				Value: "Minter",
 			},
 		},
-	})
+	}, nil)
 	if err != nil {
 		t.Error(err)
 	}
