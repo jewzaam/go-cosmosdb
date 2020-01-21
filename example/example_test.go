@@ -168,6 +168,25 @@ func TestE2E(t *testing.T) {
 	}
 	t.Logf("%#v\n", docs)
 
+	i := dc.ChangeFeed(nil)
+	docs, err = i.Next(ctx)
+	if err != nil {
+		t.Error(err)
+	}
+	t.Logf("%#v\n", docs)
+	if len(docs.People) != 1 || docs.People[0].Surname != "Minter" {
+		t.Error(len(docs.People))
+	}
+
+	docs, err = i.Next(ctx)
+	if err != nil {
+		t.Error(err)
+	}
+	t.Logf("%#v\n", docs)
+	if docs != nil {
+		t.Error(docs)
+	}
+
 	oldETag := doc.ETag
 	doc, err = dc.Replace(ctx, personid, &types.Person{
 		ID:      personid,
@@ -186,6 +205,24 @@ func TestE2E(t *testing.T) {
 	}, &cosmosdb.Options{PreTriggers: []string{triggerid}})
 	if !cosmosdb.IsErrorStatusCode(err, http.StatusPreconditionFailed) {
 		t.Error(err)
+	}
+
+	docs, err = i.Next(ctx)
+	if err != nil {
+		t.Error(err)
+	}
+	t.Logf("%#v\n", docs)
+	if len(docs.People) != 1 || docs.People[0].Surname != "Morrison" {
+		t.Error(len(docs.People))
+	}
+
+	docs, err = i.Next(ctx)
+	if err != nil {
+		t.Error(err)
+	}
+	t.Logf("%#v\n", docs)
+	if docs != nil {
+		t.Error(docs)
 	}
 
 	err = dc.Delete(ctx, personid, doc, nil)
