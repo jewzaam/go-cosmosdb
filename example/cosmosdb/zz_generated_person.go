@@ -18,13 +18,20 @@ type personClient struct {
 // PersonClient is a person client
 type PersonClient interface {
 	Create(context.Context, string, *pkg.Person, *Options) (*pkg.Person, error)
-	List(*Options) PersonIterator
+	List(*Options) PersonRawIterator
 	ListAll(context.Context, *Options) (*pkg.People, error)
 	Get(context.Context, string, string, *Options) (*pkg.Person, error)
 	Replace(context.Context, string, *pkg.Person, *Options) (*pkg.Person, error)
 	Delete(context.Context, string, *pkg.Person, *Options) error
-	Query(string, *Query, *Options) PersonIterator
+	Query(string, *Query, *Options) PersonRawIterator
 	QueryAll(context.Context, string, *Query, *Options) (*pkg.People, error)
+	ChangeFeed(*Options) PersonIterator
+}
+
+type personChangeFeedIterator struct {
+	*personClient
+	continuation string
+	options      *Options
 }
 
 type personListIterator struct {
@@ -46,6 +53,11 @@ type personQueryIterator struct {
 // PersonIterator is a person iterator
 type PersonIterator interface {
 	Next(context.Context) (*pkg.People, error)
+}
+
+// PersonRawIterator is a person raw iterator
+type PersonRawIterator interface {
+	PersonIterator
 	NextRaw(context.Context, interface{}) error
 }
 
@@ -95,7 +107,7 @@ func (c *personClient) Create(ctx context.Context, partitionkey string, newperso
 	return
 }
 
-func (c *personClient) List(options *Options) PersonIterator {
+func (c *personClient) List(options *Options) PersonRawIterator {
 	return &personListIterator{personClient: c, options: options}
 }
 
@@ -142,12 +154,16 @@ func (c *personClient) Delete(ctx context.Context, partitionkey string, person *
 	return
 }
 
-func (c *personClient) Query(partitionkey string, query *Query, options *Options) PersonIterator {
+func (c *personClient) Query(partitionkey string, query *Query, options *Options) PersonRawIterator {
 	return &personQueryIterator{personClient: c, partitionkey: partitionkey, query: query, options: options}
 }
 
 func (c *personClient) QueryAll(ctx context.Context, partitionkey string, query *Query, options *Options) (*pkg.People, error) {
 	return c.all(ctx, c.Query(partitionkey, query, options))
+}
+
+func (c *personClient) ChangeFeed(options *Options) PersonIterator {
+	return &personChangeFeedIterator{personClient: c}
 }
 
 func (c *personClient) setOptions(options *Options, person *pkg.Person, headers http.Header) error {
@@ -172,6 +188,33 @@ func (c *personClient) setOptions(options *Options, person *pkg.Person, headers 
 	}
 
 	return nil
+}
+
+func (i *personChangeFeedIterator) Next(ctx context.Context) (people *pkg.People, err error) {
+	headers := http.Header{}
+	headers.Set("A-IM", "Incremental feed")
+
+	headers.Set("X-Ms-Max-Item-Count", "-1")
+	if i.continuation != "" {
+		headers.Set("If-None-Match", i.continuation)
+	}
+
+	err = i.setOptions(i.options, nil, headers)
+	if err != nil {
+		return
+	}
+
+	err = i.do(ctx, http.MethodGet, i.path+"/docs", "docs", i.path, http.StatusOK, nil, &people, headers)
+	if IsErrorStatusCode(err, http.StatusNotModified) {
+		err = nil
+	}
+	if err != nil {
+		return
+	}
+
+	i.continuation = headers.Get("Etag")
+
+	return
 }
 
 func (i *personListIterator) Next(ctx context.Context) (people *pkg.People, err error) {
