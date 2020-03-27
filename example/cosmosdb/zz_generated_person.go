@@ -59,6 +59,7 @@ type PersonIterator interface {
 type PersonRawIterator interface {
 	PersonIterator
 	NextRaw(context.Context, interface{}) error
+	ContinuationToken() string
 }
 
 // NewPersonClient returns a new person client
@@ -249,6 +250,10 @@ func (i *personListIterator) NextRaw(ctx context.Context, raw interface{}) (err 
 	return
 }
 
+func (i *personListIterator) ContinuationToken() string {
+	return i.continuation
+}
+
 func (i *personQueryIterator) Next(ctx context.Context) (people *pkg.People, err error) {
 	err = i.NextRaw(ctx, &people)
 	return
@@ -286,4 +291,8 @@ func (i *personQueryIterator) NextRaw(ctx context.Context, raw interface{}) (err
 	i.done = i.continuation == ""
 
 	return
+}
+
+func (i *personQueryIterator) ContinuationToken() string {
+	return i.continuation
 }
