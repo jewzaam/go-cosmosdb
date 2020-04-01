@@ -3,6 +3,7 @@ package cosmosdb
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"strings"
 
 	pkg "github.com/jim-minter/go-cosmosdb/pkg/gencosmosdb/cosmosdb/dummy"
@@ -50,13 +51,14 @@ type templateQueryIterator struct {
 
 // TemplateIterator is a template iterator
 type TemplateIterator interface {
-	Next(context.Context) (*pkg.Templates, error)
+	Next(context.Context, int) (*pkg.Templates, error)
+	Continuation() string
 }
 
 // TemplateRawIterator is a template raw iterator
 type TemplateRawIterator interface {
 	TemplateIterator
-	NextRaw(context.Context, interface{}) error
+	NextRaw(context.Context, int, interface{}) error
 }
 
 // NewTemplateClient returns a new template client
@@ -71,7 +73,7 @@ func (c *templateClient) all(ctx context.Context, i TemplateIterator) (*pkg.Temp
 	alltemplates := &pkg.Templates{}
 
 	for {
-		templates, err := i.Next(ctx)
+		templates, err := i.Next(ctx, -1)
 		if err != nil {
 			return nil, err
 		}
@@ -106,7 +108,12 @@ func (c *templateClient) Create(ctx context.Context, partitionkey string, newtem
 }
 
 func (c *templateClient) List(options *Options) TemplateRawIterator {
-	return &templateListIterator{templateClient: c, options: options}
+	continuation := ""
+	if options != nil {
+		continuation = options.Continuation
+	}
+
+	return &templateListIterator{templateClient: c, options: options, continuation: continuation}
 }
 
 func (c *templateClient) ListAll(ctx context.Context, options *Options) (*pkg.Templates, error) {
@@ -153,7 +160,12 @@ func (c *templateClient) Delete(ctx context.Context, partitionkey string, templa
 }
 
 func (c *templateClient) Query(partitionkey string, query *Query, options *Options) TemplateRawIterator {
-	return &templateQueryIterator{templateClient: c, partitionkey: partitionkey, query: query, options: options}
+	continuation := ""
+	if options != nil {
+		continuation = options.Continuation
+	}
+
+	return &templateQueryIterator{templateClient: c, partitionkey: partitionkey, query: query, options: options, continuation: continuation}
 }
 
 func (c *templateClient) QueryAll(ctx context.Context, partitionkey string, query *Query, options *Options) (*pkg.Templates, error) {
@@ -161,7 +173,12 @@ func (c *templateClient) QueryAll(ctx context.Context, partitionkey string, quer
 }
 
 func (c *templateClient) ChangeFeed(options *Options) TemplateIterator {
-	return &templateChangeFeedIterator{templateClient: c}
+	continuation := ""
+	if options != nil {
+		continuation = options.Continuation
+	}
+
+	return &templateChangeFeedIterator{templateClient: c, options: options, continuation: continuation}
 }
 
 func (c *templateClient) setOptions(options *Options, template *pkg.Template, headers http.Header) error {
@@ -188,11 +205,11 @@ func (c *templateClient) setOptions(options *Options, template *pkg.Template, he
 	return nil
 }
 
-func (i *templateChangeFeedIterator) Next(ctx context.Context) (templates *pkg.Templates, err error) {
+func (i *templateChangeFeedIterator) Next(ctx context.Context, maxItemCount int) (templates *pkg.Templates, err error) {
 	headers := http.Header{}
 	headers.Set("A-IM", "Incremental feed")
 
-	headers.Set("X-Ms-Max-Item-Count", "-1")
+	headers.Set("X-Ms-Max-Item-Count", strconv.Itoa(maxItemCount))
 	if i.continuation != "" {
 		headers.Set("If-None-Match", i.continuation)
 	}
@@ -215,18 +232,22 @@ func (i *templateChangeFeedIterator) Next(ctx context.Context) (templates *pkg.T
 	return
 }
 
-func (i *templateListIterator) Next(ctx context.Context) (templates *pkg.Templates, err error) {
-	err = i.NextRaw(ctx, &templates)
+func (i *templateChangeFeedIterator) Continuation() string {
+	return i.continuation
+}
+
+func (i *templateListIterator) Next(ctx context.Context, maxItemCount int) (templates *pkg.Templates, err error) {
+	err = i.NextRaw(ctx, maxItemCount, &templates)
 	return
 }
 
-func (i *templateListIterator) NextRaw(ctx context.Context, raw interface{}) (err error) {
+func (i *templateListIterator) NextRaw(ctx context.Context, maxItemCount int, raw interface{}) (err error) {
 	if i.done {
 		return
 	}
 
 	headers := http.Header{}
-	headers.Set("X-Ms-Max-Item-Count", "-1")
+	headers.Set("X-Ms-Max-Item-Count", strconv.Itoa(maxItemCount))
 	if i.continuation != "" {
 		headers.Set("X-Ms-Continuation", i.continuation)
 	}
@@ -247,18 +268,22 @@ func (i *templateListIterator) NextRaw(ctx context.Context, raw interface{}) (er
 	return
 }
 
-func (i *templateQueryIterator) Next(ctx context.Context) (templates *pkg.Templates, err error) {
-	err = i.NextRaw(ctx, &templates)
+func (i *templateListIterator) Continuation() string {
+	return i.continuation
+}
+
+func (i *templateQueryIterator) Next(ctx context.Context, maxItemCount int) (templates *pkg.Templates, err error) {
+	err = i.NextRaw(ctx, maxItemCount, &templates)
 	return
 }
 
-func (i *templateQueryIterator) NextRaw(ctx context.Context, raw interface{}) (err error) {
+func (i *templateQueryIterator) NextRaw(ctx context.Context, maxItemCount int, raw interface{}) (err error) {
 	if i.done {
 		return
 	}
 
 	headers := http.Header{}
-	headers.Set("X-Ms-Max-Item-Count", "-1")
+	headers.Set("X-Ms-Max-Item-Count", strconv.Itoa(maxItemCount))
 	headers.Set("X-Ms-Documentdb-Isquery", "True")
 	headers.Set("Content-Type", "application/query+json")
 	if i.partitionkey != "" {
@@ -284,4 +309,8 @@ func (i *templateQueryIterator) NextRaw(ctx context.Context, raw interface{}) (e
 	i.done = i.continuation == ""
 
 	return
+}
+
+func (i *templateQueryIterator) Continuation() string {
+	return i.continuation
 }

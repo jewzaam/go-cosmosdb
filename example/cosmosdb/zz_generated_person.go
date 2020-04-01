@@ -5,6 +5,7 @@ package cosmosdb
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"strings"
 
 	pkg "github.com/jim-minter/go-cosmosdb/example/types"
@@ -52,13 +53,14 @@ type personQueryIterator struct {
 
 // PersonIterator is a person iterator
 type PersonIterator interface {
-	Next(context.Context) (*pkg.People, error)
+	Next(context.Context, int) (*pkg.People, error)
+	Continuation() string
 }
 
 // PersonRawIterator is a person raw iterator
 type PersonRawIterator interface {
 	PersonIterator
-	NextRaw(context.Context, interface{}) error
+	NextRaw(context.Context, int, interface{}) error
 }
 
 // NewPersonClient returns a new person client
@@ -73,7 +75,7 @@ func (c *personClient) all(ctx context.Context, i PersonIterator) (*pkg.People, 
 	allpeople := &pkg.People{}
 
 	for {
-		people, err := i.Next(ctx)
+		people, err := i.Next(ctx, -1)
 		if err != nil {
 			return nil, err
 		}
@@ -108,7 +110,12 @@ func (c *personClient) Create(ctx context.Context, partitionkey string, newperso
 }
 
 func (c *personClient) List(options *Options) PersonRawIterator {
-	return &personListIterator{personClient: c, options: options}
+	continuation := ""
+	if options != nil {
+		continuation = options.Continuation
+	}
+
+	return &personListIterator{personClient: c, options: options, continuation: continuation}
 }
 
 func (c *personClient) ListAll(ctx context.Context, options *Options) (*pkg.People, error) {
@@ -155,7 +162,12 @@ func (c *personClient) Delete(ctx context.Context, partitionkey string, person *
 }
 
 func (c *personClient) Query(partitionkey string, query *Query, options *Options) PersonRawIterator {
-	return &personQueryIterator{personClient: c, partitionkey: partitionkey, query: query, options: options}
+	continuation := ""
+	if options != nil {
+		continuation = options.Continuation
+	}
+
+	return &personQueryIterator{personClient: c, partitionkey: partitionkey, query: query, options: options, continuation: continuation}
 }
 
 func (c *personClient) QueryAll(ctx context.Context, partitionkey string, query *Query, options *Options) (*pkg.People, error) {
@@ -163,7 +175,12 @@ func (c *personClient) QueryAll(ctx context.Context, partitionkey string, query 
 }
 
 func (c *personClient) ChangeFeed(options *Options) PersonIterator {
-	return &personChangeFeedIterator{personClient: c}
+	continuation := ""
+	if options != nil {
+		continuation = options.Continuation
+	}
+
+	return &personChangeFeedIterator{personClient: c, options: options, continuation: continuation}
 }
 
 func (c *personClient) setOptions(options *Options, person *pkg.Person, headers http.Header) error {
@@ -190,11 +207,11 @@ func (c *personClient) setOptions(options *Options, person *pkg.Person, headers 
 	return nil
 }
 
-func (i *personChangeFeedIterator) Next(ctx context.Context) (people *pkg.People, err error) {
+func (i *personChangeFeedIterator) Next(ctx context.Context, maxItemCount int) (people *pkg.People, err error) {
 	headers := http.Header{}
 	headers.Set("A-IM", "Incremental feed")
 
-	headers.Set("X-Ms-Max-Item-Count", "-1")
+	headers.Set("X-Ms-Max-Item-Count", strconv.Itoa(maxItemCount))
 	if i.continuation != "" {
 		headers.Set("If-None-Match", i.continuation)
 	}
@@ -217,18 +234,22 @@ func (i *personChangeFeedIterator) Next(ctx context.Context) (people *pkg.People
 	return
 }
 
-func (i *personListIterator) Next(ctx context.Context) (people *pkg.People, err error) {
-	err = i.NextRaw(ctx, &people)
+func (i *personChangeFeedIterator) Continuation() string {
+	return i.continuation
+}
+
+func (i *personListIterator) Next(ctx context.Context, maxItemCount int) (people *pkg.People, err error) {
+	err = i.NextRaw(ctx, maxItemCount, &people)
 	return
 }
 
-func (i *personListIterator) NextRaw(ctx context.Context, raw interface{}) (err error) {
+func (i *personListIterator) NextRaw(ctx context.Context, maxItemCount int, raw interface{}) (err error) {
 	if i.done {
 		return
 	}
 
 	headers := http.Header{}
-	headers.Set("X-Ms-Max-Item-Count", "-1")
+	headers.Set("X-Ms-Max-Item-Count", strconv.Itoa(maxItemCount))
 	if i.continuation != "" {
 		headers.Set("X-Ms-Continuation", i.continuation)
 	}
@@ -249,18 +270,22 @@ func (i *personListIterator) NextRaw(ctx context.Context, raw interface{}) (err 
 	return
 }
 
-func (i *personQueryIterator) Next(ctx context.Context) (people *pkg.People, err error) {
-	err = i.NextRaw(ctx, &people)
+func (i *personListIterator) Continuation() string {
+	return i.continuation
+}
+
+func (i *personQueryIterator) Next(ctx context.Context, maxItemCount int) (people *pkg.People, err error) {
+	err = i.NextRaw(ctx, maxItemCount, &people)
 	return
 }
 
-func (i *personQueryIterator) NextRaw(ctx context.Context, raw interface{}) (err error) {
+func (i *personQueryIterator) NextRaw(ctx context.Context, maxItemCount int, raw interface{}) (err error) {
 	if i.done {
 		return
 	}
 
 	headers := http.Header{}
-	headers.Set("X-Ms-Max-Item-Count", "-1")
+	headers.Set("X-Ms-Max-Item-Count", strconv.Itoa(maxItemCount))
 	headers.Set("X-Ms-Documentdb-Isquery", "True")
 	headers.Set("Content-Type", "application/query+json")
 	if i.partitionkey != "" {
@@ -286,4 +311,8 @@ func (i *personQueryIterator) NextRaw(ctx context.Context, raw interface{}) (err
 	i.done = i.continuation == ""
 
 	return
+}
+
+func (i *personQueryIterator) Continuation() string {
+	return i.continuation
 }
