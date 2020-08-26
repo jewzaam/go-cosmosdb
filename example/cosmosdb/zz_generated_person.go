@@ -19,7 +19,7 @@ type personClient struct {
 // PersonClient is a person client
 type PersonClient interface {
 	Create(context.Context, string, *pkg.Person, *Options) (*pkg.Person, error)
-	List(*Options) PersonRawIterator
+	List(*Options) PersonIterator
 	ListAll(context.Context, *Options) (*pkg.People, error)
 	Get(context.Context, string, string, *Options) (*pkg.Person, error)
 	Replace(context.Context, string, *pkg.Person, *Options) (*pkg.Person, error)
@@ -109,7 +109,7 @@ func (c *personClient) Create(ctx context.Context, partitionkey string, newperso
 	return
 }
 
-func (c *personClient) List(options *Options) PersonRawIterator {
+func (c *personClient) List(options *Options) PersonIterator {
 	continuation := ""
 	if options != nil {
 		continuation = options.Continuation
@@ -239,11 +239,6 @@ func (i *personChangeFeedIterator) Continuation() string {
 }
 
 func (i *personListIterator) Next(ctx context.Context, maxItemCount int) (people *pkg.People, err error) {
-	err = i.NextRaw(ctx, maxItemCount, &people)
-	return
-}
-
-func (i *personListIterator) NextRaw(ctx context.Context, maxItemCount int, raw interface{}) (err error) {
 	if i.done {
 		return
 	}
@@ -259,7 +254,7 @@ func (i *personListIterator) NextRaw(ctx context.Context, maxItemCount int, raw 
 		return
 	}
 
-	err = i.do(ctx, http.MethodGet, i.path+"/docs", "docs", i.path, http.StatusOK, nil, &raw, headers)
+	err = i.do(ctx, http.MethodGet, i.path+"/docs", "docs", i.path, http.StatusOK, nil, &people, headers)
 	if err != nil {
 		return
 	}
