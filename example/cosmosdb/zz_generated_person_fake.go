@@ -248,7 +248,9 @@ func (c *FakePersonClient) QueryAll(ctx context.Context, partitionkey string, qu
 	quer, ok := c.queries[query.Query]
 	if ok {
 		items := quer(c, query)
-		return items.Next(ctx, -1)
+		res := &pkg.People{}
+		err := items.NextRaw(ctx, -1, res)
+		return res, err
 	} else {
 		return nil, ErrNotImplemented
 	}
