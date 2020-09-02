@@ -35,6 +35,10 @@ type FakePersonClient struct {
 	lock       *sync.RWMutex
 	triggers   map[string]FakePersonTrigger
 	queries    map[string]FakePersonQuery
+
+	// unavailable, if not nil, is an error to throw when attempting to
+	// communicate with this Client
+	unavailable error
 }
 
 func decodePerson(s []byte, handle *codec.JsonHandle) (*pkg.Person, error) {
@@ -53,6 +57,10 @@ func encodePerson(doc *pkg.Person, handle *codec.JsonHandle) (res []byte, err er
 	return
 }
 
+func (c *FakePersonClient) MakeUnavailable(err error) {
+	c.unavailable = err
+}
+
 func (c *FakePersonClient) encodeAndCopy(doc *pkg.Person) (*pkg.Person, []byte, error) {
 	encoded, err := encodePerson(doc, c.jsonHandle)
 	if err != nil {
@@ -66,6 +74,9 @@ func (c *FakePersonClient) encodeAndCopy(doc *pkg.Person) (*pkg.Person, []byte, 
 }
 
 func (c *FakePersonClient) Create(ctx context.Context, partitionkey string, doc *pkg.Person, options *Options) (*pkg.Person, error) {
+	if c.unavailable != nil {
+		return nil, c.unavailable
+	}
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
@@ -93,6 +104,9 @@ func (c *FakePersonClient) Create(ctx context.Context, partitionkey string, doc 
 }
 
 func (c *FakePersonClient) List(*Options) PersonIterator {
+	if c.unavailable != nil {
+		return &fakePersonErroringRawIterator{err: c.unavailable}
+	}
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 
@@ -109,8 +123,12 @@ func (c *FakePersonClient) List(*Options) PersonIterator {
 }
 
 func (c *FakePersonClient) ListAll(context.Context, *Options) (*pkg.People, error) {
+	if c.unavailable != nil {
+		return nil, c.unavailable
+	}
 	c.lock.RLock()
 	defer c.lock.RUnlock()
+
 	people := &pkg.People{
 		Count:     len(c.docs),
 		People: make([]*pkg.Person, 0, len(c.docs)),
@@ -127,6 +145,9 @@ func (c *FakePersonClient) ListAll(context.Context, *Options) (*pkg.People, erro
 }
 
 func (c *FakePersonClient) Get(ctx context.Context, partitionkey string, documentId string, options *Options) (*pkg.Person, error) {
+	if c.unavailable != nil {
+		return nil, c.unavailable
+	}
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 
@@ -138,6 +159,9 @@ func (c *FakePersonClient) Get(ctx context.Context, partitionkey string, documen
 }
 
 func (c *FakePersonClient) Replace(ctx context.Context, partitionkey string, doc *pkg.Person, options *Options) (*pkg.Person, error) {
+	if c.unavailable != nil {
+		return nil, c.unavailable
+	}
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
@@ -162,6 +186,9 @@ func (c *FakePersonClient) Replace(ctx context.Context, partitionkey string, doc
 }
 
 func (c *FakePersonClient) Delete(ctx context.Context, partitionKey string, doc *pkg.Person, options *Options) error {
+	if c.unavailable != nil {
+		return c.unavailable
+	}
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
@@ -175,7 +202,10 @@ func (c *FakePersonClient) Delete(ctx context.Context, partitionKey string, doc 
 }
 
 func (c *FakePersonClient) ChangeFeed(*Options) PersonIterator {
-	return &fakePersonNotImplementedIterator{}
+	if c.unavailable != nil {
+		return &fakePersonErroringRawIterator{err: c.unavailable}
+	}
+	return &fakePersonErroringRawIterator{err: ErrNotImplemented}
 }
 
 func (c *FakePersonClient) processPreTriggers(ctx context.Context, doc *pkg.Person, options *Options) error {
@@ -194,6 +224,9 @@ func (c *FakePersonClient) processPreTriggers(ctx context.Context, doc *pkg.Pers
 }
 
 func (c *FakePersonClient) Query(name string, query *Query, options *Options) PersonRawIterator {
+	if c.unavailable != nil {
+		return &fakePersonErroringRawIterator{err: c.unavailable}
+	}
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 
@@ -201,11 +234,14 @@ func (c *FakePersonClient) Query(name string, query *Query, options *Options) Pe
 	if ok {
 		return quer(c, query)
 	} else {
-		return &fakePersonNotImplementedIterator{}
+		return &fakePersonErroringRawIterator{err: ErrNotImplemented}
 	}
 }
 
 func (c *FakePersonClient) QueryAll(ctx context.Context, partitionkey string, query *Query, options *Options) (*pkg.People, error) {
+	if c.unavailable != nil {
+		return nil, c.unavailable
+	}
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 
@@ -272,18 +308,19 @@ func (i *fakePersonClientRawIterator) Continuation() string {
 	return ""
 }
 
-// fakePersonNotImplementedIterator is a RawIterator that will return an error on use.
-type fakePersonNotImplementedIterator struct {
+// fakePersonErroringRawIterator is a RawIterator that will return an error on use.
+type fakePersonErroringRawIterator struct {
+	err error
 }
 
-func (i *fakePersonNotImplementedIterator) Next(ctx context.Context, maxItemCount int) (*pkg.People, error) {
-	return nil, ErrNotImplemented
+func (i *fakePersonErroringRawIterator) Next(ctx context.Context, maxItemCount int) (*pkg.People, error) {
+	return nil, i.err
 }
 
-func (i *fakePersonNotImplementedIterator) NextRaw(context.Context, int, interface{}) error {
-	return ErrNotImplemented
+func (i *fakePersonErroringRawIterator) NextRaw(context.Context, int, interface{}) error {
+	return i.err
 }
 
-func (i *fakePersonNotImplementedIterator) Continuation() string {
+func (i *fakePersonErroringRawIterator) Continuation() string {
 	return ""
 }
