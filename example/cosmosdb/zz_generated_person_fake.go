@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strings"
 	"sync"
 
 	"github.com/ugorji/go/codec"
@@ -15,38 +14,56 @@ import (
 	pkg "github.com/jim-minter/go-cosmosdb/example/types"
 )
 
-type FakePersonDecoder func(*string) *pkg.Person
+type FakePersonDecoder func([]byte, *codec.JsonHandle) (*pkg.Person, error)
 type FakePersonTrigger func(context.Context, *pkg.Person) error
-type FakePersonQuery func(*Query, map[string]*string, FakePersonDecoder) []*string
+type FakePersonQuery func(PersonClient, *Query) PersonRawIterator
 
 var _ PersonClient = &FakePersonClient{}
 
+func NewFakePersonClient(h *codec.JsonHandle) *FakePersonClient {
+	return &FakePersonClient{
+		docs:       make(map[string][]byte),
+		triggers:   make(map[string]FakePersonTrigger),
+		queries:    make(map[string]FakePersonQuery),
+		jsonHandle: h,
+		lock:       &sync.RWMutex{},
+	}
+}
+
 type FakePersonClient struct {
-	docs       map[string]*string
+	docs       map[string][]byte
 	jsonHandle *codec.JsonHandle
-	lock       sync.Locker
+	lock       *sync.RWMutex
 	triggers   map[string]FakePersonTrigger
 	queries    map[string]FakePersonQuery
 }
 
-func NewFakePersonClient(h *codec.JsonHandle) *FakePersonClient {
-	return &FakePersonClient{
-		docs:       make(map[string]*string),
-		triggers:   make(map[string]FakePersonTrigger),
-		queries:    make(map[string]FakePersonQuery),
-		jsonHandle: h,
-		lock:       &sync.Mutex{},
-	}
+func decodePerson(s []byte, handle *codec.JsonHandle) (*pkg.Person, error) {
+	res := &pkg.Person{}
+	err := codec.NewDecoder(bytes.NewBuffer(s), handle).Decode(&res)
+	return res, err
 }
 
-func (c *FakePersonClient) fromString(s *string) *pkg.Person {
-	res := &pkg.Person{}
-	d := codec.NewDecoder(bytes.NewBufferString(*s), c.jsonHandle)
-	err := d.Decode(&res)
+func encodePerson(doc *pkg.Person, handle *codec.JsonHandle) (res []byte, err error) {
+	buf := &bytes.Buffer{}
+	err = codec.NewEncoder(buf, handle).Encode(doc)
 	if err != nil {
-		panic(err)
+		return
 	}
-	return res
+	res = buf.Bytes()
+	return
+}
+
+func (c *FakePersonClient) encodeAndCopy(doc *pkg.Person) (*pkg.Person, []byte, error) {
+	encoded, err := encodePerson(doc, c.jsonHandle)
+	if err != nil {
+		return nil, nil, err
+	}
+	res, err := decodePerson(encoded, c.jsonHandle)
+	if err != nil {
+		return nil, nil, err
+	}
+	return res, encoded, err
 }
 
 func (c *FakePersonClient) Create(ctx context.Context, partitionkey string, doc *pkg.Person, options *Options) (*pkg.Person, error) {
@@ -62,66 +79,65 @@ func (c *FakePersonClient) Create(ctx context.Context, partitionkey string, doc 
 	}
 
 	if options != nil {
-		for _, o := range options.PreTriggers {
-			err := c.processPreTrigger(ctx, doc, o)
-			if err != nil {
-				return nil, err
-			}
+		err := c.processPreTriggers(ctx, doc, options)
+		if err != nil {
+			return nil, err
 		}
 	}
 
-	buf := &bytes.Buffer{}
-	err := codec.NewEncoder(buf, c.jsonHandle).Encode(doc)
+	res, enc, err := c.encodeAndCopy(doc)
 	if err != nil {
 		return nil, err
 	}
-
-	out := buf.String()
-	c.docs[doc.ID] = &out
-	return c.fromString(&out), nil
+	c.docs[doc.ID] = enc
+	return res, nil
 }
 
 func (c *FakePersonClient) List(*Options) PersonIterator {
-	c.lock.Lock()
-	defer c.lock.Unlock()
+	c.lock.RLock()
+	defer c.lock.RUnlock()
 
-	docs := make([]*string, 0, len(c.docs))
+	docs := make([]*pkg.Person, 0, len(c.docs))
 	for _, d := range c.docs {
-		docs = append(docs, d)
+		r, err := decodePerson(d, c.jsonHandle)
+		if err != nil {
+			// todo: ??? what do we do here
+			fmt.Print(err)
+		}
+		docs = append(docs, r)
 	}
-
-	return &FakePersonClientRawIterator{
-		docs:       docs,
-		jsonHandle: c.jsonHandle,
-	}
+	return NewFakePersonClientRawIterator(docs)
 }
 
 func (c *FakePersonClient) ListAll(context.Context, *Options) (*pkg.People, error) {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
 	people := &pkg.People{
 		Count:     len(c.docs),
 		People: make([]*pkg.Person, 0, len(c.docs)),
 	}
 
 	for _, d := range c.docs {
-		dec := c.fromString(d)
+		dec, err := decodePerson(d, c.jsonHandle)
+		if err != nil {
+			return nil, err
+		}
 		people.People = append(people.People, dec)
 	}
-
 	return people, nil
 }
 
 func (c *FakePersonClient) Get(ctx context.Context, partitionkey string, documentId string, options *Options) (*pkg.Person, error) {
-	c.lock.Lock()
-	defer c.lock.Unlock()
+	c.lock.RLock()
+	defer c.lock.RUnlock()
 
 	out, ext := c.docs[documentId]
 	if !ext {
 		return nil, &Error{StatusCode: http.StatusNotFound}
 	}
-
-	dec := c.fromString(out)
-	return dec, nil
+	return decodePerson(out, c.jsonHandle)
 }
+
 func (c *FakePersonClient) Replace(ctx context.Context, partitionkey string, doc *pkg.Person, options *Options) (*pkg.Person, error) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
@@ -132,23 +148,18 @@ func (c *FakePersonClient) Replace(ctx context.Context, partitionkey string, doc
 	}
 
 	if options != nil {
-		for _, o := range options.PreTriggers {
-			err := c.processPreTrigger(ctx, doc, o)
-			if err != nil {
-				return nil, err
-			}
+		err := c.processPreTriggers(ctx, doc, options)
+		if err != nil {
+			return nil, err
 		}
 	}
 
-	buf := &bytes.Buffer{}
-	err := codec.NewEncoder(buf, c.jsonHandle).Encode(doc)
+	res, enc, err := c.encodeAndCopy(doc)
 	if err != nil {
 		return nil, err
 	}
-
-	out := buf.String()
-	c.docs[doc.ID] = &out
-	return c.fromString(&out), nil
+	c.docs[doc.ID] = enc
+	return res, nil
 }
 
 func (c *FakePersonClient) Delete(ctx context.Context, partitionKey string, doc *pkg.Person, options *Options) error {
@@ -168,50 +179,44 @@ func (c *FakePersonClient) ChangeFeed(*Options) PersonIterator {
 	return &fakePersonNotImplementedIterator{}
 }
 
-func (c *FakePersonClient) processPreTrigger(ctx context.Context, doc *pkg.Person, trigger string) (err error) {
-	trig, ok := c.triggers[trigger]
-	if ok {
-		return trig(ctx, doc)
-	} else {
-		panic(ErrNotImplemented)
+func (c *FakePersonClient) processPreTriggers(ctx context.Context, doc *pkg.Person, options *Options) error {
+	for _, trigger := range options.PreTriggers {
+		trig, ok := c.triggers[trigger]
+		if ok {
+			err := trig(ctx, doc)
+			if err != nil {
+				return err
+			}
+		} else {
+			return ErrNotImplemented
+		}
 	}
+	return nil
 }
 
 func (c *FakePersonClient) Query(name string, query *Query, options *Options) PersonRawIterator {
-	c.lock.Lock()
-	defer c.lock.Unlock()
+	c.lock.RLock()
+	defer c.lock.RUnlock()
 
 	quer, ok := c.queries[query.Query]
 	if ok {
-		docs := quer(query, c.docs, c.fromString)
-		return &FakePersonClientRawIterator{
-			docs:       docs,
-			jsonHandle: c.jsonHandle,
-		}
+		return quer(c, query)
 	} else {
-		panic(ErrNotImplemented)
+		return &fakePersonNotImplementedIterator{}
 	}
 }
 
 func (c *FakePersonClient) QueryAll(ctx context.Context, partitionkey string, query *Query, options *Options) (*pkg.People, error) {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-
-	var results []*pkg.Person
+	c.lock.RLock()
+	defer c.lock.RUnlock()
 
 	quer, ok := c.queries[query.Query]
 	if ok {
-		for _, doc := range quer(query, c.docs, c.fromString) {
-			results = append(results, c.fromString(doc))
-		}
+		items := quer(c, query)
+		return items.Next(ctx, -1)
 	} else {
-		panic(ErrNotImplemented)
+		return nil, ErrNotImplemented
 	}
-
-	return &pkg.People{
-		Count:     len(results),
-		People: results,
-	}, nil
 }
 
 func (c *FakePersonClient) InjectTrigger(trigger string, impl FakePersonTrigger) {
@@ -222,37 +227,29 @@ func (c *FakePersonClient) InjectQuery(query string, impl FakePersonQuery) {
 	c.queries[query] = impl
 }
 
-type FakePersonClientRawIterator struct {
-	docs         []*string
-	jsonHandle   *codec.JsonHandle
+// NewFakePersonClientRawIterator creates a RawIterator that will produce only
+// People from Next() and NextRaw().
+func NewFakePersonClientRawIterator(docs []*pkg.Person) PersonRawIterator {
+	return &fakePersonClientRawIterator{docs: docs}
+}
+
+type fakePersonClientRawIterator struct {
+	docs         []*pkg.Person
 	continuation int
 }
 
-func (i *FakePersonClientRawIterator) decode(inp []*string) (done []*pkg.Person, err error) {
-	for _, doc := range inp {
-		res := &pkg.Person{}
-		d := codec.NewDecoder(bytes.NewBufferString(*doc), i.jsonHandle)
-		err := d.Decode(&res)
-		if err != nil {
-			return nil, err
-		}
-		done = append(done, res)
-	}
-	return
+func (i *fakePersonClientRawIterator) Next(ctx context.Context, maxItemCount int) (*pkg.People, error) {
+	out := &pkg.People{}
+	err := i.NextRaw(ctx, maxItemCount, out)
+	return out, err
 }
 
-func (i *FakePersonClientRawIterator) Next(ctx context.Context, maxItemCount int) (*pkg.People, error) {
-	docs := &pkg.People{}
-	err := i.NextRaw(ctx, maxItemCount, docs)
-	return docs, err
-}
-
-func (i *FakePersonClientRawIterator) NextRaw(ctx context.Context, maxItemCount int, raw interface{}) (err error) {
+func (i *fakePersonClientRawIterator) NextRaw(ctx context.Context, maxItemCount int, out interface{}) error {
 	if i.continuation >= len(i.docs) {
 		return nil
 	}
 
-	var docs []*string
+	var docs []*pkg.Person
 	if maxItemCount == -1 {
 		docs = i.docs[i.continuation:]
 		i.continuation = len(i.docs)
@@ -261,32 +258,17 @@ func (i *FakePersonClientRawIterator) NextRaw(ctx context.Context, maxItemCount 
 		i.continuation += maxItemCount
 	}
 
-	d, ok := raw.(*pkg.People)
-	if ok {
-		var out []*pkg.Person
-		out, err = i.decode(docs)
-		d.People = out
-		d.Count = len(d.People)
-	} else {
-		var f strings.Builder
-		fmt.Fprintf(&f, `{"Count": %d, "Documents": [`, len(docs))
-		for n, doc := range docs {
-			fmt.Fprint(&f, *doc)
-			if n != len(docs) {
-				fmt.Fprint(&f, ",")
-			}
-		}
-		fmt.Fprint(&f, "]}")
-		d := codec.NewDecoder(bytes.NewBufferString(f.String()), i.jsonHandle)
-		err = d.Decode(&raw)
-	}
-	return err
+	d := out.(*pkg.People)
+	d.People = docs
+	d.Count = len(d.People)
+	return nil
 }
 
-func (i *FakePersonClientRawIterator) Continuation() string {
+func (i *fakePersonClientRawIterator) Continuation() string {
 	return ""
 }
 
+// fakePersonNotImplementedIterator is a RawIterator that will return an error on use.
 type fakePersonNotImplementedIterator struct {
 }
 
