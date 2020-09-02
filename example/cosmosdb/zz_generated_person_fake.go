@@ -14,7 +14,6 @@ import (
 	pkg "github.com/jim-minter/go-cosmosdb/example/types"
 )
 
-type FakePersonDecoder func([]byte, *codec.JsonHandle) (*pkg.Person, error)
 type FakePersonTrigger func(context.Context, *pkg.Person) error
 type FakePersonQuery func(PersonClient, *Query) PersonRawIterator
 
