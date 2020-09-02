@@ -240,6 +240,11 @@ type fakePersonClientRawIterator struct {
 func (i *fakePersonClientRawIterator) Next(ctx context.Context, maxItemCount int) (*pkg.People, error) {
 	out := &pkg.People{}
 	err := i.NextRaw(ctx, maxItemCount, out)
+
+	if out.Count == 0 {
+		return nil, nil
+	}
+
 	return out, err
 }
 
