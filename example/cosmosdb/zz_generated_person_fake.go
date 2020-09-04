@@ -15,7 +15,7 @@ import (
 )
 
 type FakePersonTrigger func(context.Context, *pkg.Person) error
-type FakePersonQuery func(PersonClient, *Query) PersonRawIterator
+type FakePersonQuery func(PersonClient, *Query, *Options) PersonRawIterator
 
 var _ PersonClient = &FakePersonClient{}
 
@@ -232,7 +232,7 @@ func (c *FakePersonClient) Query(name string, query *Query, options *Options) Pe
 
 	quer, ok := c.queries[query.Query]
 	if ok {
-		return quer(c, query)
+		return quer(c, query, options)
 	} else {
 		return &fakePersonErroringRawIterator{err: ErrNotImplemented}
 	}
@@ -247,7 +247,7 @@ func (c *FakePersonClient) QueryAll(ctx context.Context, partitionkey string, qu
 
 	quer, ok := c.queries[query.Query]
 	if ok {
-		items := quer(c, query)
+		items := quer(c, query, options)
 		res := &pkg.People{}
 		err := items.NextRaw(ctx, -1, res)
 		return res, err
