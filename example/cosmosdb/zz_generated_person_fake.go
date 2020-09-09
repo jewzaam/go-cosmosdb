@@ -19,11 +19,12 @@ type FakePersonQuery func(PersonClient, *Query, *Options) PersonRawIterator
 
 var _ PersonClient = &FakePersonClient{}
 
-func NewFakePersonClient(h *codec.JsonHandle) *FakePersonClient {
+func NewFakePersonClient(h *codec.JsonHandle, uniqueKeys []string) *FakePersonClient {
 	return &FakePersonClient{
 		docs:       make(map[string][]byte),
 		triggers:   make(map[string]FakePersonTrigger),
 		queries:    make(map[string]FakePersonQuery),
+		uniqueKeys: uniqueKeys,
 		jsonHandle: h,
 		lock:       &sync.RWMutex{},
 	}
@@ -35,6 +36,7 @@ type FakePersonClient struct {
 	lock       *sync.RWMutex
 	triggers   map[string]FakePersonTrigger
 	queries    map[string]FakePersonQuery
+	uniqueKeys []string
 
 	// unavailable, if not nil, is an error to throw when attempting to
 	// communicate with this Client
@@ -43,6 +45,12 @@ type FakePersonClient struct {
 
 func decodePerson(s []byte, handle *codec.JsonHandle) (*pkg.Person, error) {
 	res := &pkg.Person{}
+	err := codec.NewDecoder(bytes.NewBuffer(s), handle).Decode(&res)
+	return res, err
+}
+
+func decodePersonToMap(s []byte, handle *codec.JsonHandle) (map[string]string, error) {
+	res := make(map[string]string)
 	err := codec.NewDecoder(bytes.NewBuffer(s), handle).Decode(&res)
 	return res, err
 }
@@ -80,11 +88,29 @@ func (c *FakePersonClient) Create(ctx context.Context, partitionkey string, doc 
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
-	_, ext := c.docs[doc.ID]
-	if ext {
-		return nil, &Error{
-			StatusCode: http.StatusPreconditionFailed,
-			Message:    "Entity with the specified id already exists in the system",
+	res, enc, err := c.encodeAndCopy(doc)
+	if err != nil {
+		return nil, err
+	}
+
+	docAsMap, err := decodePersonToMap(enc, c.jsonHandle)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, ext := range c.docs {
+		extDecoded, err := decodePersonToMap(ext, c.jsonHandle)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, key := range c.uniqueKeys {
+			if docAsMap[key] != "" && extDecoded[key] != "" && docAsMap[key] == extDecoded[key] {
+				return nil, &Error{
+					StatusCode: http.StatusPreconditionFailed,
+					Message:    "Entity with the specified id already exists in the system",
+				}
+			}
 		}
 	}
 
@@ -95,10 +121,6 @@ func (c *FakePersonClient) Create(ctx context.Context, partitionkey string, doc 
 		}
 	}
 
-	res, enc, err := c.encodeAndCopy(doc)
-	if err != nil {
-		return nil, err
-	}
 	c.docs[doc.ID] = enc
 	return res, nil
 }
