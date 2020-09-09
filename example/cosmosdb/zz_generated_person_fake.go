@@ -5,6 +5,7 @@ package cosmosdb
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -49,10 +50,17 @@ func decodePerson(s []byte, handle *codec.JsonHandle) (*pkg.Person, error) {
 	return res, err
 }
 
-func decodePersonToMap(s []byte, handle *codec.JsonHandle) (map[string]string, error) {
-	res := make(map[string]string)
+func decodePersonToMap(s []byte, handle *codec.JsonHandle) (map[interface{}]interface{}, error) {
+	var res interface{}
 	err := codec.NewDecoder(bytes.NewBuffer(s), handle).Decode(&res)
-	return res, err
+	if err != nil {
+		return nil, err
+	}
+	ret, ok := res.(map[interface{}]interface{})
+	if !ok {
+		return nil, errors.New("Could not coerce")
+	}
+	return ret, err
 }
 
 func encodePerson(doc *pkg.Person, handle *codec.JsonHandle) (res []byte, err error) {
@@ -88,6 +96,13 @@ func (c *FakePersonClient) Create(ctx context.Context, partitionkey string, doc 
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
+	if options != nil {
+		err := c.processPreTriggers(ctx, doc, options)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	res, enc, err := c.encodeAndCopy(doc)
 	if err != nil {
 		return nil, err
@@ -111,13 +126,6 @@ func (c *FakePersonClient) Create(ctx context.Context, partitionkey string, doc 
 					Message:    "Entity with the specified id already exists in the system",
 				}
 			}
-		}
-	}
-
-	if options != nil {
-		err := c.processPreTriggers(ctx, doc, options)
-		if err != nil {
-			return nil, err
 		}
 	}
 
