@@ -107,7 +107,6 @@ func (c *FakePersonClient) Create(ctx context.Context, partitionkey string, doc 
 	if err != nil {
 		return nil, err
 	}
-
 	docAsMap, err := decodePersonToMap(enc, c.jsonHandle)
 	if err != nil {
 		return nil, err
@@ -120,7 +119,17 @@ func (c *FakePersonClient) Create(ctx context.Context, partitionkey string, doc 
 		}
 
 		for _, key := range c.uniqueKeys {
-			if docAsMap[key] != "" && extDecoded[key] != "" && docAsMap[key] == extDecoded[key] {
+			var ourKeyStr string
+			var theirKeyStr string
+			ourKey, ourKeyOk := docAsMap[key]
+			if ourKeyOk {
+				ourKeyStr, ourKeyOk = ourKey.(string)
+			}
+			theirKey, theirKeyOk := extDecoded[key]
+			if theirKeyOk {
+				theirKeyStr, theirKeyOk = theirKey.(string)
+			}
+			if ourKeyOk && theirKeyOk && ourKeyStr != "" && ourKeyStr == theirKeyStr {
 				return nil, &Error{
 					StatusCode: http.StatusPreconditionFailed,
 					Message:    "Entity with the specified id already exists in the system",
@@ -135,7 +144,7 @@ func (c *FakePersonClient) Create(ctx context.Context, partitionkey string, doc 
 
 func (c *FakePersonClient) List(*Options) PersonIterator {
 	if c.unavailable != nil {
-		return &fakePersonErroringRawIterator{err: c.unavailable}
+		return NewFakePersonClientErroringRawIterator(c.unavailable)
 	}
 	c.lock.RLock()
 	defer c.lock.RUnlock()
@@ -149,7 +158,7 @@ func (c *FakePersonClient) List(*Options) PersonIterator {
 		}
 		docs = append(docs, r)
 	}
-	return NewFakePersonClientRawIterator(docs)
+	return NewFakePersonClientRawIterator(docs, 0)
 }
 
 func (c *FakePersonClient) ListAll(context.Context, *Options) (*pkg.People, error) {
@@ -233,9 +242,9 @@ func (c *FakePersonClient) Delete(ctx context.Context, partitionKey string, doc 
 
 func (c *FakePersonClient) ChangeFeed(*Options) PersonIterator {
 	if c.unavailable != nil {
-		return &fakePersonErroringRawIterator{err: c.unavailable}
+		return NewFakePersonClientErroringRawIterator(c.unavailable)
 	}
-	return &fakePersonErroringRawIterator{err: ErrNotImplemented}
+	return NewFakePersonClientErroringRawIterator(ErrNotImplemented)
 }
 
 func (c *FakePersonClient) processPreTriggers(ctx context.Context, doc *pkg.Person, options *Options) error {
@@ -255,7 +264,7 @@ func (c *FakePersonClient) processPreTriggers(ctx context.Context, doc *pkg.Pers
 
 func (c *FakePersonClient) Query(name string, query *Query, options *Options) PersonRawIterator {
 	if c.unavailable != nil {
-		return &fakePersonErroringRawIterator{err: c.unavailable}
+		return NewFakePersonClientErroringRawIterator(c.unavailable)
 	}
 	c.lock.RLock()
 	defer c.lock.RUnlock()
@@ -264,7 +273,7 @@ func (c *FakePersonClient) Query(name string, query *Query, options *Options) Pe
 	if ok {
 		return quer(c, query, options)
 	} else {
-		return &fakePersonErroringRawIterator{err: ErrNotImplemented}
+		return NewFakePersonClientErroringRawIterator(ErrNotImplemented)
 	}
 }
 
@@ -296,8 +305,8 @@ func (c *FakePersonClient) InjectQuery(query string, impl FakePersonQuery) {
 
 // NewFakePersonClientRawIterator creates a RawIterator that will produce only
 // People from Next() and NextRaw().
-func NewFakePersonClientRawIterator(docs []*pkg.Person) PersonRawIterator {
-	return &fakePersonClientRawIterator{docs: docs}
+func NewFakePersonClientRawIterator(docs []*pkg.Person, continuation int) PersonRawIterator {
+	return &fakePersonClientRawIterator{docs: docs, continuation: continuation}
 }
 
 type fakePersonClientRawIterator struct {
@@ -312,7 +321,6 @@ func (i *fakePersonClientRawIterator) Next(ctx context.Context, maxItemCount int
 	if out.Count == 0 {
 		return nil, nil
 	}
-
 	return out, err
 }
 
@@ -326,8 +334,12 @@ func (i *fakePersonClientRawIterator) NextRaw(ctx context.Context, maxItemCount 
 		docs = i.docs[i.continuation:]
 		i.continuation = len(i.docs)
 	} else {
-		docs = i.docs[i.continuation : i.continuation+maxItemCount]
-		i.continuation += maxItemCount
+		max := i.continuation + maxItemCount
+		if max > len(i.docs) {
+			max = len(i.docs)
+		}
+		docs = i.docs[i.continuation:max]
+		i.continuation += max
 	}
 
 	d := out.(*pkg.People)
@@ -337,10 +349,17 @@ func (i *fakePersonClientRawIterator) NextRaw(ctx context.Context, maxItemCount 
 }
 
 func (i *fakePersonClientRawIterator) Continuation() string {
-	return ""
+	if i.continuation >= len(i.docs) {
+		return ""
+	}
+	return fmt.Sprintf("%d", i.continuation)
 }
 
 // fakePersonErroringRawIterator is a RawIterator that will return an error on use.
+func NewFakePersonClientErroringRawIterator(err error) *fakePersonErroringRawIterator {
+	return &fakePersonErroringRawIterator{err: err}
+}
+
 type fakePersonErroringRawIterator struct {
 	err error
 }
