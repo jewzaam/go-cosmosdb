@@ -28,6 +28,7 @@ func NewFakePersonClient(h *codec.JsonHandle, uniqueKeys []string) *FakePersonCl
 		uniqueKeys: uniqueKeys,
 		jsonHandle: h,
 		lock:       &sync.RWMutex{},
+		sorter:     func(in []*pkg.Person) {},
 	}
 }
 
@@ -38,6 +39,7 @@ type FakePersonClient struct {
 	triggers   map[string]FakePersonTrigger
 	queries    map[string]FakePersonQuery
 	uniqueKeys []string
+	sorter     func([]*pkg.Person)
 
 	// unavailable, if not nil, is an error to throw when attempting to
 	// communicate with this Client
@@ -75,6 +77,10 @@ func encodePerson(doc *pkg.Person, handle *codec.JsonHandle) (res []byte, err er
 
 func (c *FakePersonClient) MakeUnavailable(err error) {
 	c.unavailable = err
+}
+
+func (c *FakePersonClient) UseSorter(sorter func([]*pkg.Person)) {
+	c.sorter = sorter
 }
 
 func (c *FakePersonClient) encodeAndCopy(doc *pkg.Person) (*pkg.Person, []byte, error) {
@@ -131,7 +137,7 @@ func (c *FakePersonClient) Create(ctx context.Context, partitionkey string, doc 
 			}
 			if ourKeyOk && theirKeyOk && ourKeyStr != "" && ourKeyStr == theirKeyStr {
 				return nil, &Error{
-					StatusCode: http.StatusPreconditionFailed,
+					StatusCode: http.StatusConflict,
 					Message:    "Entity with the specified id already exists in the system",
 				}
 			}
@@ -153,11 +159,11 @@ func (c *FakePersonClient) List(*Options) PersonIterator {
 	for _, d := range c.docs {
 		r, err := decodePerson(d, c.jsonHandle)
 		if err != nil {
-			// todo: ??? what do we do here
-			fmt.Print(err)
+			return NewFakePersonClientErroringRawIterator(err)
 		}
 		docs = append(docs, r)
 	}
+	c.sorter(docs)
 	return NewFakePersonClientRawIterator(docs, 0)
 }
 
@@ -180,6 +186,7 @@ func (c *FakePersonClient) ListAll(context.Context, *Options) (*pkg.People, erro
 		}
 		people.People = append(people.People, dec)
 	}
+	c.sorter(people.People)
 	return people, nil
 }
 
