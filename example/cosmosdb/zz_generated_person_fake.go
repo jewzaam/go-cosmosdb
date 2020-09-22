@@ -165,21 +165,21 @@ func (c *FakePersonClient) List(*Options) PersonIterator {
 	defer c.lock.RUnlock()
 
 	if c.unavailable != nil {
-		return NewFakePersonClientErroringRawIterator(c.unavailable)
+		return NewFakePersonErroringRawIterator(c.unavailable)
 	}
 
 	docs := make([]*pkg.Person, 0, len(c.docs))
 	for _, d := range c.docs {
 		r, err := c.decodePerson(d)
 		if err != nil {
-			return NewFakePersonClientErroringRawIterator(err)
+			return NewFakePersonErroringRawIterator(err)
 		}
 		docs = append(docs, r)
 	}
 
 	c.sorter(docs)
 
-	return NewFakePersonClientIterator(docs, 0)
+	return NewFakePersonIterator(docs, 0)
 }
 
 func (c *FakePersonClient) ListAll(ctx context.Context, opts *Options) (*pkg.People, error) {
@@ -224,9 +224,9 @@ func (c *FakePersonClient) ChangeFeed(*Options) PersonIterator {
 	defer c.lock.RUnlock()
 
 	if c.unavailable != nil {
-		return NewFakePersonClientErroringRawIterator(c.unavailable)
+		return NewFakePersonErroringRawIterator(c.unavailable)
 	}
-	return NewFakePersonClientErroringRawIterator(ErrNotImplemented)
+	return NewFakePersonErroringRawIterator(ErrNotImplemented)
 }
 
 func (c *FakePersonClient) processPreTriggers(ctx context.Context, doc *pkg.Person, options *Options) error {
@@ -249,14 +249,14 @@ func (c *FakePersonClient) Query(name string, query *Query, options *Options) Pe
 	defer c.lock.RUnlock()
 
 	if c.unavailable != nil {
-		return NewFakePersonClientErroringRawIterator(c.unavailable)
+		return NewFakePersonErroringRawIterator(c.unavailable)
 	}
 
 	quer, ok := c.queries[query.Query]
 	if ok {
 		return quer(c, query, options)
 	} else {
-		return NewFakePersonClientErroringRawIterator(ErrNotImplemented)
+		return NewFakePersonErroringRawIterator(ErrNotImplemented)
 	}
 }
 
@@ -265,19 +265,19 @@ func (c *FakePersonClient) QueryAll(ctx context.Context, partitionkey string, qu
 	return iter.Next(ctx, -1)
 }
 
-// NewFakePersonClientIterator creates a PersonIterator that will produce
+// NewFakePersonIterator creates a PersonIterator that will produce
 // only People from Next().
-func NewFakePersonClientIterator(docs []*pkg.Person, continuation int) PersonIterator {
-	return &fakePersonClientIterator{docs: docs, continuation: continuation}
+func NewFakePersonIterator(docs []*pkg.Person, continuation int) PersonIterator {
+	return &fakePersonIterator{docs: docs, continuation: continuation}
 }
 
-type fakePersonClientIterator struct {
+type fakePersonIterator struct {
 	docs         []*pkg.Person
 	continuation int
 	done         bool
 }
 
-func (i *fakePersonClientIterator) Next(ctx context.Context, maxItemCount int) (*pkg.People, error) {
+func (i *fakePersonIterator) Next(ctx context.Context, maxItemCount int) (*pkg.People, error) {
 	if i.done {
 		return nil, nil
 	}
@@ -303,18 +303,19 @@ func (i *fakePersonClientIterator) Next(ctx context.Context, maxItemCount int) (
 	}, nil
 }
 
-func (i *fakePersonClientIterator) Continuation() string {
+func (i *fakePersonIterator) Continuation() string {
 	if i.continuation >= len(i.docs) {
 		return ""
 	}
 	return fmt.Sprintf("%d", i.continuation)
 }
 
-// fakePersonErroringRawIterator is a RawIterator that will return an error on use.
-func NewFakePersonClientErroringRawIterator(err error) *fakePersonErroringRawIterator {
+func NewFakePersonErroringRawIterator(err error) *fakePersonErroringRawIterator {
 	return &fakePersonErroringRawIterator{err: err}
 }
 
+// fakePersonErroringRawIterator is a RawIterator that will return an error on
+// use.
 type fakePersonErroringRawIterator struct {
 	err error
 }
