@@ -13,132 +13,132 @@ import (
 	pkg "github.com/jim-minter/go-cosmosdb/example/types"
 )
 
-type fakePersonTrigger func(context.Context, *pkg.Person) error
-type fakePersonQuery func(PersonClient, *Query, *Options) PersonRawIterator
+type fakePersonTriggerHandler func(context.Context, *pkg.Person) error
+type fakePersonQueryHandler func(PersonClient, *Query, *Options) PersonRawIterator
 
 var _ PersonClient = &FakePersonClient{}
 
 func NewFakePersonClient(h *codec.JsonHandle) *FakePersonClient {
 	return &FakePersonClient{
-		docs:       make(map[string][]byte),
-		triggers:   make(map[string]fakePersonTrigger),
-		queries:    make(map[string]fakePersonQuery),
-		jsonHandle: h,
-		lock:       &sync.RWMutex{},
+		people:       make(map[string][]byte),
+		triggerHandlers: make(map[string]fakePersonTriggerHandler),
+		queryHandlers:   make(map[string]fakePersonQueryHandler),
+		jsonHandle:      h,
+		lock:            &sync.RWMutex{},
 	}
 }
 
 type FakePersonClient struct {
-	docs       map[string][]byte
-	jsonHandle *codec.JsonHandle
-	lock       *sync.RWMutex
-	triggers   map[string]fakePersonTrigger
-	queries    map[string]fakePersonQuery
-	sorter     func([]*pkg.Person)
+	people       map[string][]byte
+	jsonHandle      *codec.JsonHandle
+	lock            *sync.RWMutex
+	triggerHandlers map[string]fakePersonTriggerHandler
+	queryHandlers   map[string]fakePersonQueryHandler
+	sorter          func([]*pkg.Person)
 
 	// returns true if documents conflict
-	checkDocsConflict func(*pkg.Person, *pkg.Person) bool
+	conflictChecker func(*pkg.Person, *pkg.Person) bool
 
-	// unavailable, if not nil, is an error to throw when attempting to
-	// communicate with this Client
-	unavailable error
+	// err, if not nil, is an error to return when attempting to communicate
+	// with this Client
+	err error
 }
 
-func (c *FakePersonClient) decodePerson(s []byte) (res *pkg.Person, err error) {
-	err = codec.NewDecoderBytes(s, c.jsonHandle).Decode(&res)
+func (c *FakePersonClient) decodePerson(s []byte) (person *pkg.Person, err error) {
+	err = codec.NewDecoderBytes(s, c.jsonHandle).Decode(&person)
 	return
 }
 
-func (c *FakePersonClient) encodePerson(doc *pkg.Person) (res []byte, err error) {
-	err = codec.NewEncoderBytes(&res, c.jsonHandle).Encode(doc)
+func (c *FakePersonClient) encodePerson(person *pkg.Person) (b []byte, err error) {
+	err = codec.NewEncoderBytes(&b, c.jsonHandle).Encode(person)
 	return
 }
 
-func (c *FakePersonClient) MakeUnavailable(err error) {
+func (c *FakePersonClient) SetError(err error) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	c.unavailable = err
+	c.err = err
 }
 
-func (c *FakePersonClient) UseSorter(sorter func([]*pkg.Person)) {
+func (c *FakePersonClient) SetSorter(sorter func([]*pkg.Person)) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
 	c.sorter = sorter
 }
 
-func (c *FakePersonClient) UseDocumentConflictChecker(checker func(*pkg.Person, *pkg.Person) bool) {
+func (c *FakePersonClient) SetConflictChecker(conflictChecker func(*pkg.Person, *pkg.Person) bool) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
-	c.checkDocsConflict = checker
+	c.conflictChecker = conflictChecker
 }
 
-func (c *FakePersonClient) InjectTrigger(trigger string, impl fakePersonTrigger) {
+func (c *FakePersonClient) SetTriggerHandler(triggerName string, trigger fakePersonTriggerHandler) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
-	c.triggers[trigger] = impl
+	c.triggerHandlers[triggerName] = trigger
 }
 
-func (c *FakePersonClient) InjectQuery(query string, impl fakePersonQuery) {
+func (c *FakePersonClient) SetQueryHandler(queryName string, query fakePersonQueryHandler) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
-	c.queries[query] = impl
+	c.queryHandlers[queryName] = query
 }
 
-func (c *FakePersonClient) encodeAndCopy(doc *pkg.Person) (*pkg.Person, []byte, error) {
-	encoded, err := c.encodePerson(doc)
+func (c *FakePersonClient) encodeAndCopy(person *pkg.Person) (*pkg.Person, []byte, error) {
+	b, err := c.encodePerson(person)
 	if err != nil {
 		return nil, nil, err
 	}
-	res, err := c.decodePerson(encoded)
+	personCopy, err := c.decodePerson(b)
 	if err != nil {
 		return nil, nil, err
 	}
-	return res, encoded, err
+	return personCopy, b, err
 }
 
-func (c *FakePersonClient) apply(ctx context.Context, partitionkey string, doc *pkg.Person, options *Options, isCreate bool) (*pkg.Person, error) {
+func (c *FakePersonClient) apply(ctx context.Context, partitionkey string, person *pkg.Person, options *Options, isCreate bool) (*pkg.Person, error) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
-	if c.unavailable != nil {
-		return nil, c.unavailable
+	if c.err != nil {
+		return nil, c.err
 	}
 
 	if options != nil {
-		err := c.processPreTriggers(ctx, doc, options)
+		err := c.processPreTriggers(ctx, person, options)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	res, enc, err := c.encodeAndCopy(doc)
+	personCopy, b, err := c.encodeAndCopy(person)
 	if err != nil {
 		return nil, err
 	}
 
-	_, ext := c.docs[doc.ID]
-	if isCreate && ext {
+	_, exists := c.people[person.ID]
+	if isCreate && exists {
 		return nil, &Error{
 			StatusCode: http.StatusConflict,
 			Message:    "Entity with the specified id already exists in the system",
 		}
 	}
-	if !isCreate && !ext {
+	if !isCreate && !exists {
 		return nil, &Error{StatusCode: http.StatusNotFound}
 	}
 
-	if c.checkDocsConflict != nil {
-		for _, ext := range c.docs {
-			dec, err := c.decodePerson(ext)
+	if c.conflictChecker != nil {
+		for id := range c.people {
+			personToCheck, err := c.decodePerson(c.people[id])
 			if err != nil {
 				return nil, err
 			}
 
-			if c.checkDocsConflict(dec, res) {
+			if c.conflictChecker(personToCheck, personCopy) {
 				return nil, &Error{
 					StatusCode: http.StatusConflict,
 					Message:    "Entity with the specified id already exists in the system",
@@ -147,76 +147,76 @@ func (c *FakePersonClient) apply(ctx context.Context, partitionkey string, doc *
 		}
 	}
 
-	c.docs[doc.ID] = enc
-	return res, nil
+	c.people[person.ID] = b
+	return personCopy, nil
 }
 
-func (c *FakePersonClient) Create(ctx context.Context, partitionkey string, doc *pkg.Person, options *Options) (*pkg.Person, error) {
-	return c.apply(ctx, partitionkey, doc, options, true)
+func (c *FakePersonClient) Create(ctx context.Context, partitionkey string, person *pkg.Person, options *Options) (*pkg.Person, error) {
+	return c.apply(ctx, partitionkey, person, options, true)
 }
 
-func (c *FakePersonClient) Replace(ctx context.Context, partitionkey string, doc *pkg.Person, options *Options) (*pkg.Person, error) {
-	return c.apply(ctx, partitionkey, doc, options, false)
+func (c *FakePersonClient) Replace(ctx context.Context, partitionkey string, person *pkg.Person, options *Options) (*pkg.Person, error) {
+	return c.apply(ctx, partitionkey, person, options, false)
 }
 
 func (c *FakePersonClient) List(*Options) PersonIterator {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 
-	if c.unavailable != nil {
-		return NewFakePersonErroringRawIterator(c.unavailable)
+	if c.err != nil {
+		return NewFakePersonErroringRawIterator(c.err)
 	}
 
-	docs := make([]*pkg.Person, 0, len(c.docs))
-	for _, d := range c.docs {
+	people := make([]*pkg.Person, 0, len(c.people))
+	for _, d := range c.people {
 		r, err := c.decodePerson(d)
 		if err != nil {
 			return NewFakePersonErroringRawIterator(err)
 		}
-		docs = append(docs, r)
+		people = append(people, r)
 	}
 
 	if c.sorter != nil {
-		c.sorter(docs)
+		c.sorter(people)
 	}
 
-	return NewFakePersonIterator(docs, 0)
+	return NewFakePersonIterator(people, 0)
 }
 
-func (c *FakePersonClient) ListAll(ctx context.Context, opts *Options) (*pkg.People, error) {
-	iter := c.List(opts)
+func (c *FakePersonClient) ListAll(ctx context.Context, options *Options) (*pkg.People, error) {
+	iter := c.List(options)
 	return iter.Next(ctx, -1)
 }
 
-func (c *FakePersonClient) Get(ctx context.Context, partitionkey string, documentId string, options *Options) (*pkg.Person, error) {
+func (c *FakePersonClient) Get(ctx context.Context, partitionkey string, id string, options *Options) (*pkg.Person, error) {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 
-	if c.unavailable != nil {
-		return nil, c.unavailable
+	if c.err != nil {
+		return nil, c.err
 	}
 
-	out, ext := c.docs[documentId]
-	if !ext {
+	person, exists := c.people[id]
+	if !exists {
 		return nil, &Error{StatusCode: http.StatusNotFound}
 	}
-	return c.decodePerson(out)
+	return c.decodePerson(person)
 }
 
-func (c *FakePersonClient) Delete(ctx context.Context, partitionKey string, doc *pkg.Person, options *Options) error {
+func (c *FakePersonClient) Delete(ctx context.Context, partitionKey string, person *pkg.Person, options *Options) error {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
-	if c.unavailable != nil {
-		return c.unavailable
+	if c.err != nil {
+		return c.err
 	}
 
-	_, ext := c.docs[doc.ID]
-	if !ext {
+	_, exists := c.people[person.ID]
+	if !exists {
 		return &Error{StatusCode: http.StatusNotFound}
 	}
 
-	delete(c.docs, doc.ID)
+	delete(c.people, person.ID)
 	return nil
 }
 
@@ -224,17 +224,16 @@ func (c *FakePersonClient) ChangeFeed(*Options) PersonIterator {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 
-	if c.unavailable != nil {
-		return NewFakePersonErroringRawIterator(c.unavailable)
+	if c.err != nil {
+		return NewFakePersonErroringRawIterator(c.err)
 	}
 	return NewFakePersonErroringRawIterator(ErrNotImplemented)
 }
 
-func (c *FakePersonClient) processPreTriggers(ctx context.Context, doc *pkg.Person, options *Options) error {
-	for _, trigger := range options.PreTriggers {
-		trig, ok := c.triggers[trigger]
-		if ok {
-			err := trig(ctx, doc)
+func (c *FakePersonClient) processPreTriggers(ctx context.Context, person *pkg.Person, options *Options) error {
+	for _, triggerName := range options.PreTriggers {
+		if triggerHandler := c.triggerHandlers[triggerName]; triggerHandler != nil {
+			err := triggerHandler(ctx, person)
 			if err != nil {
 				return err
 			}
@@ -249,13 +248,12 @@ func (c *FakePersonClient) Query(name string, query *Query, options *Options) Pe
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 
-	if c.unavailable != nil {
-		return NewFakePersonErroringRawIterator(c.unavailable)
+	if c.err != nil {
+		return NewFakePersonErroringRawIterator(c.err)
 	}
 
-	quer, ok := c.queries[query.Query]
-	if ok {
-		return quer(c, query, options)
+	if queryHandler := c.queryHandlers[query.Query]; queryHandler != nil {
+		return queryHandler(c, query, options)
 	} else {
 		return NewFakePersonErroringRawIterator(ErrNotImplemented)
 	}
@@ -268,12 +266,12 @@ func (c *FakePersonClient) QueryAll(ctx context.Context, partitionkey string, qu
 
 // NewFakePersonIterator creates a PersonIterator that will produce
 // only People from Next().
-func NewFakePersonIterator(docs []*pkg.Person, continuation int) PersonIterator {
-	return &fakePersonIterator{docs: docs, continuation: continuation}
+func NewFakePersonIterator(people []*pkg.Person, continuation int) PersonIterator {
+	return &fakePersonIterator{people: people, continuation: continuation}
 }
 
 type fakePersonIterator struct {
-	docs         []*pkg.Person
+	people    []*pkg.Person
 	continuation int
 	done         bool
 }
@@ -283,29 +281,29 @@ func (i *fakePersonIterator) Next(ctx context.Context, maxItemCount int) (*pkg.P
 		return nil, nil
 	}
 
-	var docs []*pkg.Person
+	var people []*pkg.Person
 	if maxItemCount == -1 {
-		docs = i.docs[i.continuation:]
-		i.continuation = len(i.docs)
+		people = i.people[i.continuation:]
+		i.continuation = len(i.people)
 		i.done = true
 	} else {
 		max := i.continuation + maxItemCount
-		if max > len(i.docs) {
-			max = len(i.docs)
+		if max > len(i.people) {
+			max = len(i.people)
 		}
-		docs = i.docs[i.continuation:max]
+		people = i.people[i.continuation:max]
 		i.continuation += max
 		i.done = i.Continuation() == ""
 	}
 
 	return &pkg.People{
-		People: docs,
-		Count:     len(docs),
+		People: people,
+		Count:     len(people),
 	}, nil
 }
 
 func (i *fakePersonIterator) Continuation() string {
-	if i.continuation >= len(i.docs) {
+	if i.continuation >= len(i.people) {
 		return ""
 	}
 	return fmt.Sprintf("%d", i.continuation)
