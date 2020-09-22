@@ -47,19 +47,14 @@ type FakePersonClient struct {
 	unavailable error
 }
 
-func (c *FakePersonClient) decodePerson(s []byte) (*pkg.Person, error) {
-	res := &pkg.Person{}
-	err := codec.NewDecoderBytes(s, c.jsonHandle).Decode(&res)
-	return res, err
+func (c *FakePersonClient) decodePerson(s []byte) (res *pkg.Person, err error) {
+	err = codec.NewDecoderBytes(s, c.jsonHandle).Decode(&res)
+	return
 }
 
-func (c *FakePersonClient) encodePerson(doc *pkg.Person) ([]byte, error) {
-	res := make([]byte, 0)
-	err := codec.NewEncoderBytes(&res, c.jsonHandle).Encode(doc)
-	if err != nil {
-		return nil, err
-	}
-	return res, err
+func (c *FakePersonClient) encodePerson(doc *pkg.Person) (res []byte, err error) {
+	err = codec.NewEncoderBytes(&res, c.jsonHandle).Encode(doc)
+	return
 }
 
 func (c *FakePersonClient) MakeUnavailable(err error) {
