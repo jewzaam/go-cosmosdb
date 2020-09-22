@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"reflect"
 	"sync"
 
 	"github.com/ugorji/go/codec"
@@ -180,7 +179,7 @@ func (c *FakePersonClient) List(*Options) PersonIterator {
 
 	c.sorter(docs)
 
-	return NewFakePersonClientRawIterator(docs, 0)
+	return NewFakePersonClientIterator(docs, 0)
 }
 
 func (c *FakePersonClient) ListAll(ctx context.Context, opts *Options) (*pkg.People, error) {
@@ -266,26 +265,21 @@ func (c *FakePersonClient) QueryAll(ctx context.Context, partitionkey string, qu
 	return iter.Next(ctx, -1)
 }
 
-// NewFakePersonClientRawIterator creates a RawIterator that will produce only
-// People from Next() and NextRaw().
-func NewFakePersonClientRawIterator(docs []*pkg.Person, continuation int) PersonRawIterator {
-	return &fakePersonClientRawIterator{docs: docs, continuation: continuation}
+// NewFakePersonClientIterator creates a PersonIterator that will produce
+// only People from Next().
+func NewFakePersonClientIterator(docs []*pkg.Person, continuation int) PersonIterator {
+	return &fakePersonClientIterator{docs: docs, continuation: continuation}
 }
 
-type fakePersonClientRawIterator struct {
+type fakePersonClientIterator struct {
 	docs         []*pkg.Person
 	continuation int
 	done         bool
 }
 
-func (i *fakePersonClientRawIterator) Next(ctx context.Context, maxItemCount int) (out *pkg.People, err error) {
-	err = i.NextRaw(ctx, maxItemCount, &out)
-	return
-}
-
-func (i *fakePersonClientRawIterator) NextRaw(ctx context.Context, maxItemCount int, out interface{}) error {
+func (i *fakePersonClientIterator) Next(ctx context.Context, maxItemCount int) (*pkg.People, error) {
 	if i.done {
-		return nil
+		return nil, nil
 	}
 
 	var docs []*pkg.Person
@@ -303,15 +297,13 @@ func (i *fakePersonClientRawIterator) NextRaw(ctx context.Context, maxItemCount 
 		i.done = i.Continuation() == ""
 	}
 
-	y := reflect.ValueOf(out)
-	d := &pkg.People{}
-	d.People = docs
-	d.Count = len(d.People)
-	y.Elem().Set(reflect.ValueOf(d))
-	return nil
+	return &pkg.People{
+		People: docs,
+		Count:     len(docs),
+	}, nil
 }
 
-func (i *fakePersonClientRawIterator) Continuation() string {
+func (i *fakePersonClientIterator) Continuation() string {
 	if i.continuation >= len(i.docs) {
 		return ""
 	}
