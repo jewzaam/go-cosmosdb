@@ -3,11 +3,10 @@
 package cosmosdb
 
 import (
-	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"sync"
 
 	"github.com/ugorji/go/codec"
@@ -15,20 +14,20 @@ import (
 	pkg "github.com/jim-minter/go-cosmosdb/example/types"
 )
 
-type FakePersonTrigger func(context.Context, *pkg.Person) error
-type FakePersonQuery func(PersonClient, *Query, *Options) PersonRawIterator
+type fakePersonTrigger func(context.Context, *pkg.Person) error
+type fakePersonQuery func(PersonClient, *Query, *Options) PersonRawIterator
 
 var _ PersonClient = &FakePersonClient{}
 
-func NewFakePersonClient(h *codec.JsonHandle, uniqueKeys []string) *FakePersonClient {
+func NewFakePersonClient(h *codec.JsonHandle) *FakePersonClient {
 	return &FakePersonClient{
-		docs:       make(map[string][]byte),
-		triggers:   make(map[string]FakePersonTrigger),
-		queries:    make(map[string]FakePersonQuery),
-		uniqueKeys: uniqueKeys,
-		jsonHandle: h,
-		lock:       &sync.RWMutex{},
-		sorter:     func(in []*pkg.Person) {},
+		docs:              make(map[string][]byte),
+		triggers:          make(map[string]fakePersonTrigger),
+		queries:           make(map[string]fakePersonQuery),
+		jsonHandle:        h,
+		lock:              &sync.RWMutex{},
+		sorter:            func(in []*pkg.Person) {},
+		checkDocsConflict: func(*pkg.Person, *pkg.Person) bool { return false },
 	}
 }
 
@@ -36,46 +35,36 @@ type FakePersonClient struct {
 	docs       map[string][]byte
 	jsonHandle *codec.JsonHandle
 	lock       *sync.RWMutex
-	triggers   map[string]FakePersonTrigger
-	queries    map[string]FakePersonQuery
-	uniqueKeys []string
+	triggers   map[string]fakePersonTrigger
+	queries    map[string]fakePersonQuery
 	sorter     func([]*pkg.Person)
+
+	// returns true if documents conflict
+	checkDocsConflict func(*pkg.Person, *pkg.Person) bool
 
 	// unavailable, if not nil, is an error to throw when attempting to
 	// communicate with this Client
 	unavailable error
 }
 
-func decodePerson(s []byte, handle *codec.JsonHandle) (*pkg.Person, error) {
+func (c *FakePersonClient) decodePerson(s []byte) (*pkg.Person, error) {
 	res := &pkg.Person{}
-	err := codec.NewDecoder(bytes.NewBuffer(s), handle).Decode(&res)
+	err := codec.NewDecoderBytes(s, c.jsonHandle).Decode(&res)
 	return res, err
 }
 
-func decodePersonToMap(s []byte, handle *codec.JsonHandle) (map[interface{}]interface{}, error) {
-	var res interface{}
-	err := codec.NewDecoder(bytes.NewBuffer(s), handle).Decode(&res)
+func (c *FakePersonClient) encodePerson(doc *pkg.Person) ([]byte, error) {
+	res := make([]byte, 0)
+	err := codec.NewEncoderBytes(&res, c.jsonHandle).Encode(doc)
 	if err != nil {
 		return nil, err
 	}
-	ret, ok := res.(map[interface{}]interface{})
-	if !ok {
-		return nil, errors.New("Could not coerce")
-	}
-	return ret, err
-}
-
-func encodePerson(doc *pkg.Person, handle *codec.JsonHandle) (res []byte, err error) {
-	buf := &bytes.Buffer{}
-	err = codec.NewEncoder(buf, handle).Encode(doc)
-	if err != nil {
-		return
-	}
-	res = buf.Bytes()
-	return
+	return res, err
 }
 
 func (c *FakePersonClient) MakeUnavailable(err error) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
 	c.unavailable = err
 }
 
@@ -83,22 +72,32 @@ func (c *FakePersonClient) UseSorter(sorter func([]*pkg.Person)) {
 	c.sorter = sorter
 }
 
+func (c *FakePersonClient) UseDocumentConflictChecker(checker func(*pkg.Person, *pkg.Person) bool) {
+	c.checkDocsConflict = checker
+}
+
+func (c *FakePersonClient) InjectTrigger(trigger string, impl fakePersonTrigger) {
+	c.triggers[trigger] = impl
+}
+
+func (c *FakePersonClient) InjectQuery(query string, impl fakePersonQuery) {
+	c.queries[query] = impl
+}
+
 func (c *FakePersonClient) encodeAndCopy(doc *pkg.Person) (*pkg.Person, []byte, error) {
-	encoded, err := encodePerson(doc, c.jsonHandle)
+	encoded, err := c.encodePerson(doc)
 	if err != nil {
 		return nil, nil, err
 	}
-	res, err := decodePerson(encoded, c.jsonHandle)
+	res, err := c.decodePerson(encoded)
 	if err != nil {
 		return nil, nil, err
 	}
 	return res, encoded, err
 }
 
-func (c *FakePersonClient) Create(ctx context.Context, partitionkey string, doc *pkg.Person, options *Options) (*pkg.Person, error) {
-	if c.unavailable != nil {
-		return nil, c.unavailable
-	}
+func (c *FakePersonClient) apply(ctx context.Context, partitionkey string, doc *pkg.Person, options *Options, isNew bool) (*pkg.Person, error) {
+	var docExists bool
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
@@ -113,29 +112,27 @@ func (c *FakePersonClient) Create(ctx context.Context, partitionkey string, doc 
 	if err != nil {
 		return nil, err
 	}
-	docAsMap, err := decodePersonToMap(enc, c.jsonHandle)
-	if err != nil {
-		return nil, err
-	}
 
 	for _, ext := range c.docs {
-		extDecoded, err := decodePersonToMap(ext, c.jsonHandle)
+		dec, err := c.decodePerson(ext)
 		if err != nil {
 			return nil, err
 		}
 
-		for _, key := range c.uniqueKeys {
-			var ourKeyStr string
-			var theirKeyStr string
-			ourKey, ourKeyOk := docAsMap[key]
-			if ourKeyOk {
-				ourKeyStr, ourKeyOk = ourKey.(string)
+		if dec.ID == res.ID {
+			// If the document exists in the database, we want to error out in a
+			// create but mark the document as extant so it can be replaced if
+			// it is an update
+			if isNew {
+				return nil, &Error{
+					StatusCode: http.StatusConflict,
+					Message:    "Entity with the specified id already exists in the system",
+				}
+			} else {
+				docExists = true
 			}
-			theirKey, theirKeyOk := extDecoded[key]
-			if theirKeyOk {
-				theirKeyStr, theirKeyOk = theirKey.(string)
-			}
-			if ourKeyOk && theirKeyOk && ourKeyStr != "" && ourKeyStr == theirKeyStr {
+		} else {
+			if c.checkDocsConflict(dec, res) {
 				return nil, &Error{
 					StatusCode: http.StatusConflict,
 					Message:    "Entity with the specified id already exists in the system",
@@ -144,8 +141,26 @@ func (c *FakePersonClient) Create(ctx context.Context, partitionkey string, doc 
 		}
 	}
 
+	if !isNew && !docExists {
+		return nil, &Error{StatusCode: http.StatusNotFound}
+	}
+
 	c.docs[doc.ID] = enc
 	return res, nil
+}
+
+func (c *FakePersonClient) Create(ctx context.Context, partitionkey string, doc *pkg.Person, options *Options) (*pkg.Person, error) {
+	if c.unavailable != nil {
+		return nil, c.unavailable
+	}
+	return c.apply(ctx, partitionkey, doc, options, true)
+}
+
+func (c *FakePersonClient) Replace(ctx context.Context, partitionkey string, doc *pkg.Person, options *Options) (*pkg.Person, error) {
+	if c.unavailable != nil {
+		return nil, c.unavailable
+	}
+	return c.apply(ctx, partitionkey, doc, options, false)
 }
 
 func (c *FakePersonClient) List(*Options) PersonIterator {
@@ -157,7 +172,7 @@ func (c *FakePersonClient) List(*Options) PersonIterator {
 
 	docs := make([]*pkg.Person, 0, len(c.docs))
 	for _, d := range c.docs {
-		r, err := decodePerson(d, c.jsonHandle)
+		r, err := c.decodePerson(d)
 		if err != nil {
 			return NewFakePersonClientErroringRawIterator(err)
 		}
@@ -167,26 +182,15 @@ func (c *FakePersonClient) List(*Options) PersonIterator {
 	return NewFakePersonClientRawIterator(docs, 0)
 }
 
-func (c *FakePersonClient) ListAll(context.Context, *Options) (*pkg.People, error) {
+func (c *FakePersonClient) ListAll(ctx context.Context, opts *Options) (*pkg.People, error) {
 	if c.unavailable != nil {
 		return nil, c.unavailable
 	}
-	c.lock.RLock()
-	defer c.lock.RUnlock()
-
-	people := &pkg.People{
-		Count:     len(c.docs),
-		People: make([]*pkg.Person, 0, len(c.docs)),
+	iter := c.List(opts)
+	people, err := iter.Next(ctx, -1)
+	if err != nil {
+		return nil, err
 	}
-
-	for _, d := range c.docs {
-		dec, err := decodePerson(d, c.jsonHandle)
-		if err != nil {
-			return nil, err
-		}
-		people.People = append(people.People, dec)
-	}
-	c.sorter(people.People)
 	return people, nil
 }
 
@@ -201,34 +205,7 @@ func (c *FakePersonClient) Get(ctx context.Context, partitionkey string, documen
 	if !ext {
 		return nil, &Error{StatusCode: http.StatusNotFound}
 	}
-	return decodePerson(out, c.jsonHandle)
-}
-
-func (c *FakePersonClient) Replace(ctx context.Context, partitionkey string, doc *pkg.Person, options *Options) (*pkg.Person, error) {
-	if c.unavailable != nil {
-		return nil, c.unavailable
-	}
-	c.lock.Lock()
-	defer c.lock.Unlock()
-
-	_, exists := c.docs[doc.ID]
-	if !exists {
-		return nil, &Error{StatusCode: http.StatusNotFound}
-	}
-
-	if options != nil {
-		err := c.processPreTriggers(ctx, doc, options)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	res, enc, err := c.encodeAndCopy(doc)
-	if err != nil {
-		return nil, err
-	}
-	c.docs[doc.ID] = enc
-	return res, nil
+	return c.decodePerson(out)
 }
 
 func (c *FakePersonClient) Delete(ctx context.Context, partitionKey string, doc *pkg.Person, options *Options) error {
@@ -285,29 +262,8 @@ func (c *FakePersonClient) Query(name string, query *Query, options *Options) Pe
 }
 
 func (c *FakePersonClient) QueryAll(ctx context.Context, partitionkey string, query *Query, options *Options) (*pkg.People, error) {
-	if c.unavailable != nil {
-		return nil, c.unavailable
-	}
-	c.lock.RLock()
-	defer c.lock.RUnlock()
-
-	quer, ok := c.queries[query.Query]
-	if ok {
-		items := quer(c, query, options)
-		res := &pkg.People{}
-		err := items.NextRaw(ctx, -1, res)
-		return res, err
-	} else {
-		return nil, ErrNotImplemented
-	}
-}
-
-func (c *FakePersonClient) InjectTrigger(trigger string, impl FakePersonTrigger) {
-	c.triggers[trigger] = impl
-}
-
-func (c *FakePersonClient) InjectQuery(query string, impl FakePersonQuery) {
-	c.queries[query] = impl
+	iter := c.Query("", query, options)
+	return iter.Next(ctx, -1)
 }
 
 // NewFakePersonClientRawIterator creates a RawIterator that will produce only
@@ -319,20 +275,16 @@ func NewFakePersonClientRawIterator(docs []*pkg.Person, continuation int) Person
 type fakePersonClientRawIterator struct {
 	docs         []*pkg.Person
 	continuation int
+	done         bool
 }
 
-func (i *fakePersonClientRawIterator) Next(ctx context.Context, maxItemCount int) (*pkg.People, error) {
-	out := &pkg.People{}
-	err := i.NextRaw(ctx, maxItemCount, out)
-
-	if out.Count == 0 {
-		return nil, nil
-	}
-	return out, err
+func (i *fakePersonClientRawIterator) Next(ctx context.Context, maxItemCount int) (out *pkg.People, err error) {
+	err = i.NextRaw(ctx, maxItemCount, &out)
+	return
 }
 
 func (i *fakePersonClientRawIterator) NextRaw(ctx context.Context, maxItemCount int, out interface{}) error {
-	if i.continuation >= len(i.docs) {
+	if i.done {
 		return nil
 	}
 
@@ -340,6 +292,7 @@ func (i *fakePersonClientRawIterator) NextRaw(ctx context.Context, maxItemCount 
 	if maxItemCount == -1 {
 		docs = i.docs[i.continuation:]
 		i.continuation = len(i.docs)
+		i.done = true
 	} else {
 		max := i.continuation + maxItemCount
 		if max > len(i.docs) {
@@ -347,11 +300,14 @@ func (i *fakePersonClientRawIterator) NextRaw(ctx context.Context, maxItemCount 
 		}
 		docs = i.docs[i.continuation:max]
 		i.continuation += max
+		i.done = i.Continuation() == ""
 	}
 
-	d := out.(*pkg.People)
+	y := reflect.ValueOf(out)
+	d := &pkg.People{}
 	d.People = docs
 	d.Count = len(d.People)
+	y.Elem().Set(reflect.ValueOf(d))
 	return nil
 }
 
