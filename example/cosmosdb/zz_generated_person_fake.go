@@ -185,17 +185,15 @@ func (c *FakePersonClient) List(*Options) PersonIterator {
 		}
 		docs = append(docs, r)
 	}
+
 	c.sorter(docs)
+
 	return NewFakePersonClientRawIterator(docs, 0)
 }
 
 func (c *FakePersonClient) ListAll(ctx context.Context, opts *Options) (*pkg.People, error) {
 	iter := c.List(opts)
-	people, err := iter.Next(ctx, -1)
-	if err != nil {
-		return nil, err
-	}
-	return people, nil
+	return iter.Next(ctx, -1)
 }
 
 func (c *FakePersonClient) Get(ctx context.Context, partitionkey string, documentId string, options *Options) (*pkg.Person, error) {
