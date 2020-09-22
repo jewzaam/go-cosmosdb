@@ -21,13 +21,12 @@ var _ PersonClient = &FakePersonClient{}
 
 func NewFakePersonClient(h *codec.JsonHandle) *FakePersonClient {
 	return &FakePersonClient{
-		docs:              make(map[string][]byte),
-		triggers:          make(map[string]fakePersonTrigger),
-		queries:           make(map[string]fakePersonQuery),
-		jsonHandle:        h,
-		lock:              &sync.RWMutex{},
-		sorter:            func(in []*pkg.Person) {},
-		checkDocsConflict: func(*pkg.Person, *pkg.Person) bool { return false },
+		docs:       make(map[string][]byte),
+		triggers:   make(map[string]fakePersonTrigger),
+		queries:    make(map[string]fakePersonQuery),
+		jsonHandle: h,
+		lock:       &sync.RWMutex{},
+		sorter:     func(in []*pkg.Person) {},
 	}
 }
 
@@ -103,15 +102,13 @@ func (c *FakePersonClient) encodeAndCopy(doc *pkg.Person) (*pkg.Person, []byte, 
 	return res, encoded, err
 }
 
-func (c *FakePersonClient) apply(ctx context.Context, partitionkey string, doc *pkg.Person, options *Options, isNew bool) (*pkg.Person, error) {
+func (c *FakePersonClient) apply(ctx context.Context, partitionkey string, doc *pkg.Person, options *Options, isCreate bool) (*pkg.Person, error) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
 	if c.unavailable != nil {
 		return nil, c.unavailable
 	}
-
-	var docExists bool
 
 	if options != nil {
 		err := c.processPreTriggers(ctx, doc, options)
@@ -125,25 +122,24 @@ func (c *FakePersonClient) apply(ctx context.Context, partitionkey string, doc *
 		return nil, err
 	}
 
-	for _, ext := range c.docs {
-		dec, err := c.decodePerson(ext)
-		if err != nil {
-			return nil, err
+	_, ext := c.docs[doc.ID]
+	if isCreate && ext {
+		return nil, &Error{
+			StatusCode: http.StatusConflict,
+			Message:    "Entity with the specified id already exists in the system",
 		}
+	}
+	if !isCreate && !ext {
+		return nil, &Error{StatusCode: http.StatusNotFound}
+	}
 
-		if dec.ID == res.ID {
-			// If the document exists in the database, we want to error out in a
-			// create but mark the document as extant so it can be replaced if
-			// it is an update
-			if isNew {
-				return nil, &Error{
-					StatusCode: http.StatusConflict,
-					Message:    "Entity with the specified id already exists in the system",
-				}
-			} else {
-				docExists = true
+	if c.checkDocsConflict != nil {
+		for _, ext := range c.docs {
+			dec, err := c.decodePerson(ext)
+			if err != nil {
+				return nil, err
 			}
-		} else {
+
 			if c.checkDocsConflict(dec, res) {
 				return nil, &Error{
 					StatusCode: http.StatusConflict,
@@ -151,10 +147,6 @@ func (c *FakePersonClient) apply(ctx context.Context, partitionkey string, doc *
 				}
 			}
 		}
-	}
-
-	if !isNew && !docExists {
-		return nil, &Error{StatusCode: http.StatusNotFound}
 	}
 
 	c.docs[doc.ID] = enc
