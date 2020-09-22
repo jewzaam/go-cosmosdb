@@ -18,6 +18,7 @@ type fakePersonQueryHandler func(PersonClient, *Query, *Options) PersonRawIterat
 
 var _ PersonClient = &FakePersonClient{}
 
+// NewFakePersonClient returns a FakePersonClient
 func NewFakePersonClient(h *codec.JsonHandle) *FakePersonClient {
 	return &FakePersonClient{
 		people:       make(map[string][]byte),
@@ -28,6 +29,7 @@ func NewFakePersonClient(h *codec.JsonHandle) *FakePersonClient {
 	}
 }
 
+// FakePersonClient is a FakePersonClient
 type FakePersonClient struct {
 	people       map[string][]byte
 	jsonHandle      *codec.JsonHandle
@@ -54,12 +56,17 @@ func (c *FakePersonClient) encodePerson(person *pkg.Person) (b []byte, err error
 	return
 }
 
+// SetError sets or unsets an error that will be returned on any
+// FakePersonClient method invocation
 func (c *FakePersonClient) SetError(err error) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
+
 	c.err = err
 }
 
+// SetSorter sets or unsets a sorter function which will be used to sort values
+// returned by List() for test stability
 func (c *FakePersonClient) SetSorter(sorter func([]*pkg.Person)) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
@@ -67,6 +74,8 @@ func (c *FakePersonClient) SetSorter(sorter func([]*pkg.Person)) {
 	c.sorter = sorter
 }
 
+// SetConflictChecker sets or unsets a function which can be used to validate
+// additional unique keys in a Person
 func (c *FakePersonClient) SetConflictChecker(conflictChecker func(*pkg.Person, *pkg.Person) bool) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
@@ -74,6 +83,7 @@ func (c *FakePersonClient) SetConflictChecker(conflictChecker func(*pkg.Person, 
 	c.conflictChecker = conflictChecker
 }
 
+// SetTriggerHandler sets or unsets a trigger handler
 func (c *FakePersonClient) SetTriggerHandler(triggerName string, trigger fakePersonTriggerHandler) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
@@ -81,6 +91,7 @@ func (c *FakePersonClient) SetTriggerHandler(triggerName string, trigger fakePer
 	c.triggerHandlers[triggerName] = trigger
 }
 
+// SetQueryHandler sets or unsets a query handler
 func (c *FakePersonClient) SetQueryHandler(queryName string, query fakePersonQueryHandler) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
@@ -151,14 +162,17 @@ func (c *FakePersonClient) apply(ctx context.Context, partitionkey string, perso
 	return personCopy, nil
 }
 
+// Create creates a Person in the database
 func (c *FakePersonClient) Create(ctx context.Context, partitionkey string, person *pkg.Person, options *Options) (*pkg.Person, error) {
 	return c.apply(ctx, partitionkey, person, options, true)
 }
 
+// Replace replaces a Person in the database
 func (c *FakePersonClient) Replace(ctx context.Context, partitionkey string, person *pkg.Person, options *Options) (*pkg.Person, error) {
 	return c.apply(ctx, partitionkey, person, options, false)
 }
 
+// List returns a PersonIterator to list all People in the database
 func (c *FakePersonClient) List(*Options) PersonIterator {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
@@ -180,14 +194,16 @@ func (c *FakePersonClient) List(*Options) PersonIterator {
 		c.sorter(people)
 	}
 
-	return NewFakePersonIterator(people, 0)
+	return newFakePersonIterator(people, 0)
 }
 
+// ListAll lists all People in the database
 func (c *FakePersonClient) ListAll(ctx context.Context, options *Options) (*pkg.People, error) {
 	iter := c.List(options)
 	return iter.Next(ctx, -1)
 }
 
+// Get gets a Person from the database
 func (c *FakePersonClient) Get(ctx context.Context, partitionkey string, id string, options *Options) (*pkg.Person, error) {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
@@ -200,9 +216,11 @@ func (c *FakePersonClient) Get(ctx context.Context, partitionkey string, id stri
 	if !exists {
 		return nil, &Error{StatusCode: http.StatusNotFound}
 	}
+
 	return c.decodePerson(person)
 }
 
+// Delete deletes a Person from the database
 func (c *FakePersonClient) Delete(ctx context.Context, partitionKey string, person *pkg.Person, options *Options) error {
 	c.lock.Lock()
 	defer c.lock.Unlock()
@@ -220,6 +238,7 @@ func (c *FakePersonClient) Delete(ctx context.Context, partitionKey string, pers
 	return nil
 }
 
+// ChangeFeed is unimplemented
 func (c *FakePersonClient) ChangeFeed(*Options) PersonIterator {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
@@ -227,6 +246,7 @@ func (c *FakePersonClient) ChangeFeed(*Options) PersonIterator {
 	if c.err != nil {
 		return NewFakePersonErroringRawIterator(c.err)
 	}
+
 	return NewFakePersonErroringRawIterator(ErrNotImplemented)
 }
 
@@ -241,9 +261,11 @@ func (c *FakePersonClient) processPreTriggers(ctx context.Context, person *pkg.P
 			return ErrNotImplemented
 		}
 	}
+
 	return nil
 }
 
+// Query calls a query handler to implement database querying
 func (c *FakePersonClient) Query(name string, query *Query, options *Options) PersonRawIterator {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
@@ -254,19 +276,18 @@ func (c *FakePersonClient) Query(name string, query *Query, options *Options) Pe
 
 	if queryHandler := c.queryHandlers[query.Query]; queryHandler != nil {
 		return queryHandler(c, query, options)
-	} else {
-		return NewFakePersonErroringRawIterator(ErrNotImplemented)
 	}
+
+	return NewFakePersonErroringRawIterator(ErrNotImplemented)
 }
 
+// QueryAll calls a query handler to implement database querying
 func (c *FakePersonClient) QueryAll(ctx context.Context, partitionkey string, query *Query, options *Options) (*pkg.People, error) {
 	iter := c.Query("", query, options)
 	return iter.Next(ctx, -1)
 }
 
-// NewFakePersonIterator creates a PersonIterator that will produce
-// only People from Next().
-func NewFakePersonIterator(people []*pkg.Person, continuation int) PersonIterator {
+func newFakePersonIterator(people []*pkg.Person, continuation int) PersonIterator {
 	return &fakePersonIterator{people: people, continuation: continuation}
 }
 
@@ -309,12 +330,12 @@ func (i *fakePersonIterator) Continuation() string {
 	return fmt.Sprintf("%d", i.continuation)
 }
 
-func NewFakePersonErroringRawIterator(err error) *fakePersonErroringRawIterator {
+// NewFakePersonErroringRawIterator returns a PersonRawIterator which
+// whose methods return the given error
+func NewFakePersonErroringRawIterator(err error) PersonRawIterator {
 	return &fakePersonErroringRawIterator{err: err}
 }
 
-// fakePersonErroringRawIterator is a RawIterator that will return an error on
-// use.
 type fakePersonErroringRawIterator struct {
 	err error
 }
