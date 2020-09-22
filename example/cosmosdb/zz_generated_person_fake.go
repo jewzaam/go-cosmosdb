@@ -69,18 +69,30 @@ func (c *FakePersonClient) MakeUnavailable(err error) {
 }
 
 func (c *FakePersonClient) UseSorter(sorter func([]*pkg.Person)) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
 	c.sorter = sorter
 }
 
 func (c *FakePersonClient) UseDocumentConflictChecker(checker func(*pkg.Person, *pkg.Person) bool) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
 	c.checkDocsConflict = checker
 }
 
 func (c *FakePersonClient) InjectTrigger(trigger string, impl fakePersonTrigger) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
 	c.triggers[trigger] = impl
 }
 
 func (c *FakePersonClient) InjectQuery(query string, impl fakePersonQuery) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
 	c.queries[query] = impl
 }
 
@@ -97,9 +109,14 @@ func (c *FakePersonClient) encodeAndCopy(doc *pkg.Person) (*pkg.Person, []byte, 
 }
 
 func (c *FakePersonClient) apply(ctx context.Context, partitionkey string, doc *pkg.Person, options *Options, isNew bool) (*pkg.Person, error) {
-	var docExists bool
 	c.lock.Lock()
 	defer c.lock.Unlock()
+
+	if c.unavailable != nil {
+		return nil, c.unavailable
+	}
+
+	var docExists bool
 
 	if options != nil {
 		err := c.processPreTriggers(ctx, doc, options)
@@ -150,25 +167,20 @@ func (c *FakePersonClient) apply(ctx context.Context, partitionkey string, doc *
 }
 
 func (c *FakePersonClient) Create(ctx context.Context, partitionkey string, doc *pkg.Person, options *Options) (*pkg.Person, error) {
-	if c.unavailable != nil {
-		return nil, c.unavailable
-	}
 	return c.apply(ctx, partitionkey, doc, options, true)
 }
 
 func (c *FakePersonClient) Replace(ctx context.Context, partitionkey string, doc *pkg.Person, options *Options) (*pkg.Person, error) {
-	if c.unavailable != nil {
-		return nil, c.unavailable
-	}
 	return c.apply(ctx, partitionkey, doc, options, false)
 }
 
 func (c *FakePersonClient) List(*Options) PersonIterator {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+
 	if c.unavailable != nil {
 		return NewFakePersonClientErroringRawIterator(c.unavailable)
 	}
-	c.lock.RLock()
-	defer c.lock.RUnlock()
 
 	docs := make([]*pkg.Person, 0, len(c.docs))
 	for _, d := range c.docs {
@@ -183,9 +195,6 @@ func (c *FakePersonClient) List(*Options) PersonIterator {
 }
 
 func (c *FakePersonClient) ListAll(ctx context.Context, opts *Options) (*pkg.People, error) {
-	if c.unavailable != nil {
-		return nil, c.unavailable
-	}
 	iter := c.List(opts)
 	people, err := iter.Next(ctx, -1)
 	if err != nil {
@@ -195,11 +204,12 @@ func (c *FakePersonClient) ListAll(ctx context.Context, opts *Options) (*pkg.Peo
 }
 
 func (c *FakePersonClient) Get(ctx context.Context, partitionkey string, documentId string, options *Options) (*pkg.Person, error) {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+
 	if c.unavailable != nil {
 		return nil, c.unavailable
 	}
-	c.lock.RLock()
-	defer c.lock.RUnlock()
 
 	out, ext := c.docs[documentId]
 	if !ext {
@@ -209,11 +219,12 @@ func (c *FakePersonClient) Get(ctx context.Context, partitionkey string, documen
 }
 
 func (c *FakePersonClient) Delete(ctx context.Context, partitionKey string, doc *pkg.Person, options *Options) error {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
 	if c.unavailable != nil {
 		return c.unavailable
 	}
-	c.lock.Lock()
-	defer c.lock.Unlock()
 
 	_, ext := c.docs[doc.ID]
 	if !ext {
@@ -225,6 +236,9 @@ func (c *FakePersonClient) Delete(ctx context.Context, partitionKey string, doc 
 }
 
 func (c *FakePersonClient) ChangeFeed(*Options) PersonIterator {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+
 	if c.unavailable != nil {
 		return NewFakePersonClientErroringRawIterator(c.unavailable)
 	}
@@ -247,11 +261,12 @@ func (c *FakePersonClient) processPreTriggers(ctx context.Context, doc *pkg.Pers
 }
 
 func (c *FakePersonClient) Query(name string, query *Query, options *Options) PersonRawIterator {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+
 	if c.unavailable != nil {
 		return NewFakePersonClientErroringRawIterator(c.unavailable)
 	}
-	c.lock.RLock()
-	defer c.lock.RUnlock()
 
 	quer, ok := c.queries[query.Query]
 	if ok {
