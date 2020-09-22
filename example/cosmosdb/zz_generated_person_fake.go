@@ -99,16 +99,13 @@ func (c *FakePersonClient) SetQueryHandler(queryName string, query fakePersonQue
 	c.queryHandlers[queryName] = query
 }
 
-func (c *FakePersonClient) encodeAndCopy(person *pkg.Person) (*pkg.Person, []byte, error) {
+func (c *FakePersonClient) deepCopy(person *pkg.Person) (*pkg.Person, error) {
 	b, err := c.encodePerson(person)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	personCopy, err := c.decodePerson(b)
-	if err != nil {
-		return nil, nil, err
-	}
-	return personCopy, b, err
+
+	return c.decodePerson(b)
 }
 
 func (c *FakePersonClient) apply(ctx context.Context, partitionkey string, person *pkg.Person, options *Options, isCreate bool) (*pkg.Person, error) {
@@ -119,16 +116,16 @@ func (c *FakePersonClient) apply(ctx context.Context, partitionkey string, perso
 		return nil, c.err
 	}
 
+	person, err := c.deepCopy(person) // copy now because pretriggers can mutate person
+	if err != nil {
+		return nil, err
+	}
+
 	if options != nil {
 		err := c.processPreTriggers(ctx, person, options)
 		if err != nil {
 			return nil, err
 		}
-	}
-
-	personCopy, b, err := c.encodeAndCopy(person)
-	if err != nil {
-		return nil, err
 	}
 
 	_, exists := c.people[person.ID]
@@ -149,7 +146,7 @@ func (c *FakePersonClient) apply(ctx context.Context, partitionkey string, perso
 				return nil, err
 			}
 
-			if c.conflictChecker(personToCheck, personCopy) {
+			if c.conflictChecker(personToCheck, person) {
 				return nil, &Error{
 					StatusCode: http.StatusConflict,
 					Message:    "Entity with the specified id already exists in the system",
@@ -158,8 +155,14 @@ func (c *FakePersonClient) apply(ctx context.Context, partitionkey string, perso
 		}
 	}
 
+	b, err := c.encodePerson(person)
+	if err != nil {
+		return nil, err
+	}
+
 	c.people[person.ID] = b
-	return personCopy, nil
+
+	return person, nil
 }
 
 // Create creates a Person in the database
