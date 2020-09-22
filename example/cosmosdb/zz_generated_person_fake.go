@@ -21,7 +21,7 @@ var _ PersonClient = &FakePersonClient{}
 // NewFakePersonClient returns a FakePersonClient
 func NewFakePersonClient(h *codec.JsonHandle) *FakePersonClient {
 	return &FakePersonClient{
-		people:       make(map[string][]byte),
+		people:          make(map[string][]byte),
 		triggerHandlers: make(map[string]fakePersonTriggerHandler),
 		queryHandlers:   make(map[string]fakePersonQueryHandler),
 		jsonHandle:      h,
@@ -31,7 +31,7 @@ func NewFakePersonClient(h *codec.JsonHandle) *FakePersonClient {
 
 // FakePersonClient is a FakePersonClient
 type FakePersonClient struct {
-	people       map[string][]byte
+	people          map[string][]byte
 	jsonHandle      *codec.JsonHandle
 	lock            *sync.RWMutex
 	triggerHandlers map[string]fakePersonTriggerHandler
@@ -292,7 +292,7 @@ func newFakePersonIterator(people []*pkg.Person, continuation int) PersonIterato
 }
 
 type fakePersonIterator struct {
-	people    []*pkg.Person
+	people       []*pkg.Person
 	continuation int
 	done         bool
 }
@@ -319,7 +319,7 @@ func (i *fakePersonIterator) Next(ctx context.Context, maxItemCount int) (*pkg.P
 
 	return &pkg.People{
 		People: people,
-		Count:     len(people),
+		Count:  len(people),
 	}, nil
 }
 
