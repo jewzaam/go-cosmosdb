@@ -25,7 +25,6 @@ func NewFakePersonClient(h *codec.JsonHandle) *FakePersonClient {
 		queries:    make(map[string]fakePersonQuery),
 		jsonHandle: h,
 		lock:       &sync.RWMutex{},
-		sorter:     func(in []*pkg.Person) {},
 	}
 }
 
@@ -177,7 +176,9 @@ func (c *FakePersonClient) List(*Options) PersonIterator {
 		docs = append(docs, r)
 	}
 
-	c.sorter(docs)
+	if c.sorter != nil {
+		c.sorter(docs)
+	}
 
 	return NewFakePersonIterator(docs, 0)
 }
