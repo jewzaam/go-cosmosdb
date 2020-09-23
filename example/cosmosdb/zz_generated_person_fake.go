@@ -197,7 +197,7 @@ func (c *FakePersonClient) List(*Options) PersonIterator {
 		c.sorter(people)
 	}
 
-	return newFakePersonIterator(people, 0)
+	return NewFakePersonIterator(people, 0)
 }
 
 // ListAll lists all People in the database
@@ -290,7 +290,7 @@ func (c *FakePersonClient) QueryAll(ctx context.Context, partitionkey string, qu
 	return iter.Next(ctx, -1)
 }
 
-func newFakePersonIterator(people []*pkg.Person, continuation int) PersonIterator {
+func NewFakePersonIterator(people []*pkg.Person, continuation int) PersonRawIterator {
 	return &fakePersonIterator{people: people, continuation: continuation}
 }
 
@@ -298,6 +298,10 @@ type fakePersonIterator struct {
 	people       []*pkg.Person
 	continuation int
 	done         bool
+}
+
+func (i *fakePersonIterator) NextRaw(ctx context.Context, maxItemCount int, out interface{}) error {
+	return ErrNotImplemented
 }
 
 func (i *fakePersonIterator) Next(ctx context.Context, maxItemCount int) (*pkg.People, error) {
