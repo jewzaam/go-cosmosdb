@@ -50,7 +50,7 @@ func TestE2E(t *testing.T) {
 		},
 	}
 
-	dbc, err := cosmosdb.NewDatabaseClient(log, http.DefaultClient, jsonHandle, account, key)
+	dbc, err := cosmosdb.NewDatabaseClient(log, http.DefaultClient, jsonHandle, account+".documents.azure.com", key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +169,7 @@ func TestE2E(t *testing.T) {
 	t.Logf("%#v\n", docs)
 
 	i := dc.ChangeFeed(nil)
-	docs, err = i.Next(ctx)
+	docs, err = i.Next(ctx, 1)
 	if err != nil {
 		t.Error(err)
 	}
@@ -178,7 +178,7 @@ func TestE2E(t *testing.T) {
 		t.Error(len(docs.People))
 	}
 
-	docs, err = i.Next(ctx)
+	docs, err = i.Next(ctx, 1)
 	if err != nil {
 		t.Error(err)
 	}
@@ -207,7 +207,7 @@ func TestE2E(t *testing.T) {
 		t.Error(err)
 	}
 
-	docs, err = i.Next(ctx)
+	docs, err = i.Next(ctx, 1)
 	if err != nil {
 		t.Error(err)
 	}
@@ -216,7 +216,7 @@ func TestE2E(t *testing.T) {
 		t.Error(len(docs.People))
 	}
 
-	docs, err = i.Next(ctx)
+	docs, err = i.Next(ctx, 1)
 	if err != nil {
 		t.Error(err)
 	}
