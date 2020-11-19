@@ -158,7 +158,7 @@ func (c *FakePersonClient) apply(ctx context.Context, partitionkey string, perso
 
 	c.people[person.ID] = person
 
-	return person, nil
+	return c.deepCopy(person)
 }
 
 // Create creates a Person in the database
