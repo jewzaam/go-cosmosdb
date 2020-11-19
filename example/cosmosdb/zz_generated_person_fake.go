@@ -37,6 +37,7 @@ type FakePersonClient struct {
 	triggerHandlers map[string]fakePersonTriggerHandler
 	queryHandlers   map[string]fakePersonQueryHandler
 	sorter          func([]*pkg.Person)
+	etag            int
 
 	// returns true if documents conflict
 	conflictChecker func(*pkg.Person, *pkg.Person) bool
@@ -128,15 +129,26 @@ func (c *FakePersonClient) apply(ctx context.Context, partitionkey string, perso
 		}
 	}
 
-	_, exists := c.people[person.ID]
+	b, exists := c.people[person.ID]
 	if isCreate && exists {
 		return nil, &Error{
 			StatusCode: http.StatusConflict,
 			Message:    "Entity with the specified id already exists in the system",
 		}
 	}
-	if !isCreate && !exists {
-		return nil, &Error{StatusCode: http.StatusNotFound}
+	if !isCreate {
+		if !exists {
+			return nil, &Error{StatusCode: http.StatusNotFound}
+		}
+
+		existingPerson, err := c.decodePerson(b)
+		if err != nil {
+			return nil, err
+		}
+
+		if person.ETag != existingPerson.ETag {
+			return nil, &Error{StatusCode: http.StatusPreconditionFailed}
+		}
 	}
 
 	if c.conflictChecker != nil {
@@ -155,7 +167,10 @@ func (c *FakePersonClient) apply(ctx context.Context, partitionkey string, perso
 		}
 	}
 
-	b, err := c.encodePerson(person)
+	person.ETag = fmt.Sprint(c.etag)
+	c.etag++
+
+	b, err = c.encodePerson(person)
 	if err != nil {
 		return nil, err
 	}
