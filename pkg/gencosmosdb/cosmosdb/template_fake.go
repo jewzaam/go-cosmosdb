@@ -19,22 +19,22 @@ var _ TemplateClient = &FakeTemplateClient{}
 // NewFakeTemplateClient returns a FakeTemplateClient
 func NewFakeTemplateClient(h *codec.JsonHandle) *FakeTemplateClient {
 	return &FakeTemplateClient{
-		templates:       make(map[string][]byte),
+		jsonHandle:      h,
+		templates:       make(map[string]*pkg.Template),
 		triggerHandlers: make(map[string]fakeTemplateTriggerHandler),
 		queryHandlers:   make(map[string]fakeTemplateQueryHandler),
-		jsonHandle:      h,
-		lock:            &sync.RWMutex{},
 	}
 }
 
 // FakeTemplateClient is a FakeTemplateClient
 type FakeTemplateClient struct {
-	templates       map[string][]byte
+	lock            sync.RWMutex
 	jsonHandle      *codec.JsonHandle
-	lock            *sync.RWMutex
+	templates       map[string]*pkg.Template
 	triggerHandlers map[string]fakeTemplateTriggerHandler
 	queryHandlers   map[string]fakeTemplateQueryHandler
 	sorter          func([]*pkg.Template)
+	etag            int
 
 	// returns true if documents conflict
 	conflictChecker func(*pkg.Template, *pkg.Template) bool
@@ -42,16 +42,6 @@ type FakeTemplateClient struct {
 	// err, if not nil, is an error to return when attempting to communicate
 	// with this Client
 	err error
-}
-
-func (c *FakeTemplateClient) decodeTemplate(s []byte) (template *pkg.Template, err error) {
-	err = codec.NewDecoderBytes(s, c.jsonHandle).Decode(&template)
-	return
-}
-
-func (c *FakeTemplateClient) encodeTemplate(template *pkg.Template) (b []byte, err error) {
-	err = codec.NewEncoderBytes(&b, c.jsonHandle).Encode(template)
-	return
 }
 
 // SetError sets or unsets an error that will be returned on any
@@ -98,12 +88,19 @@ func (c *FakeTemplateClient) SetQueryHandler(queryName string, query fakeTemplat
 }
 
 func (c *FakeTemplateClient) deepCopy(template *pkg.Template) (*pkg.Template, error) {
-	b, err := c.encodeTemplate(template)
+	var b []byte
+	err := codec.NewEncoderBytes(&b, c.jsonHandle).Encode(template)
 	if err != nil {
 		return nil, err
 	}
 
-	return c.decodeTemplate(b)
+	template = nil
+	err = codec.NewDecoderBytes(b, c.jsonHandle).Decode(&template)
+	if err != nil {
+		return nil, err
+	}
+
+	return template, nil
 }
 
 func (c *FakeTemplateClient) apply(ctx context.Context, partitionkey string, template *pkg.Template, options *Options, isCreate bool) (*pkg.Template, error) {
@@ -126,24 +123,25 @@ func (c *FakeTemplateClient) apply(ctx context.Context, partitionkey string, tem
 		}
 	}
 
-	_, exists := c.templates[template.ID]
+	existingTemplate, exists := c.templates[template.ID]
 	if isCreate && exists {
 		return nil, &Error{
 			StatusCode: http.StatusConflict,
 			Message:    "Entity with the specified id already exists in the system",
 		}
 	}
-	if !isCreate && !exists {
-		return nil, &Error{StatusCode: http.StatusNotFound}
+	if !isCreate {
+		if !exists {
+			return nil, &Error{StatusCode: http.StatusNotFound}
+		}
+
+		if template.ETag != existingTemplate.ETag {
+			return nil, &Error{StatusCode: http.StatusPreconditionFailed}
+		}
 	}
 
 	if c.conflictChecker != nil {
-		for id := range c.templates {
-			templateToCheck, err := c.decodeTemplate(c.templates[id])
-			if err != nil {
-				return nil, err
-			}
-
+		for _, templateToCheck := range c.templates {
 			if c.conflictChecker(templateToCheck, template) {
 				return nil, &Error{
 					StatusCode: http.StatusConflict,
@@ -153,12 +151,10 @@ func (c *FakeTemplateClient) apply(ctx context.Context, partitionkey string, tem
 		}
 	}
 
-	b, err := c.encodeTemplate(template)
-	if err != nil {
-		return nil, err
-	}
+	template.ETag = fmt.Sprint(c.etag)
+	c.etag++
 
-	c.templates[template.ID] = b
+	c.templates[template.ID] = template
 
 	return template, nil
 }
@@ -183,12 +179,12 @@ func (c *FakeTemplateClient) List(*Options) TemplateIterator {
 	}
 
 	templates := make([]*pkg.Template, 0, len(c.templates))
-	for _, d := range c.templates {
-		r, err := c.decodeTemplate(d)
+	for _, template := range c.templates {
+		template, err := c.deepCopy(template)
 		if err != nil {
 			return NewFakeTemplateErroringRawIterator(err)
 		}
-		templates = append(templates, r)
+		templates = append(templates, template)
 	}
 
 	if c.sorter != nil {
@@ -218,7 +214,7 @@ func (c *FakeTemplateClient) Get(ctx context.Context, partitionkey string, id st
 		return nil, &Error{StatusCode: http.StatusNotFound}
 	}
 
-	return c.decodeTemplate(template)
+	return c.deepCopy(template)
 }
 
 // Delete deletes a Template from the database
@@ -254,7 +250,9 @@ func (c *FakeTemplateClient) ChangeFeed(*Options) TemplateIterator {
 func (c *FakeTemplateClient) processPreTriggers(ctx context.Context, template *pkg.Template, options *Options) error {
 	for _, triggerName := range options.PreTriggers {
 		if triggerHandler := c.triggerHandlers[triggerName]; triggerHandler != nil {
+			c.lock.Unlock()
 			err := triggerHandler(ctx, template)
+			c.lock.Lock()
 			if err != nil {
 				return err
 			}
@@ -276,7 +274,10 @@ func (c *FakeTemplateClient) Query(name string, query *Query, options *Options) 
 	}
 
 	if queryHandler := c.queryHandlers[query.Query]; queryHandler != nil {
-		return queryHandler(c, query, options)
+		c.lock.RUnlock()
+		i := queryHandler(c, query, options)
+		c.lock.RLock()
+		return i
 	}
 
 	return NewFakeTemplateErroringRawIterator(ErrNotImplemented)
