@@ -22,7 +22,7 @@ var _ PersonClient = &FakePersonClient{}
 func NewFakePersonClient(h *codec.JsonHandle) *FakePersonClient {
 	return &FakePersonClient{
 		jsonHandle:      h,
-		people:          make(map[string][]byte),
+		people:          make(map[string]*pkg.Person),
 		triggerHandlers: make(map[string]fakePersonTriggerHandler),
 		queryHandlers:   make(map[string]fakePersonQueryHandler),
 	}
@@ -32,7 +32,7 @@ func NewFakePersonClient(h *codec.JsonHandle) *FakePersonClient {
 type FakePersonClient struct {
 	lock            sync.RWMutex
 	jsonHandle      *codec.JsonHandle
-	people          map[string][]byte
+	people          map[string]*pkg.Person
 	triggerHandlers map[string]fakePersonTriggerHandler
 	queryHandlers   map[string]fakePersonQueryHandler
 	sorter          func([]*pkg.Person)
@@ -44,16 +44,6 @@ type FakePersonClient struct {
 	// err, if not nil, is an error to return when attempting to communicate
 	// with this Client
 	err error
-}
-
-func (c *FakePersonClient) decodePerson(s []byte) (person *pkg.Person, err error) {
-	err = codec.NewDecoderBytes(s, c.jsonHandle).Decode(&person)
-	return
-}
-
-func (c *FakePersonClient) encodePerson(person *pkg.Person) (b []byte, err error) {
-	err = codec.NewEncoderBytes(&b, c.jsonHandle).Encode(person)
-	return
 }
 
 // SetError sets or unsets an error that will be returned on any
@@ -100,12 +90,19 @@ func (c *FakePersonClient) SetQueryHandler(queryName string, query fakePersonQue
 }
 
 func (c *FakePersonClient) deepCopy(person *pkg.Person) (*pkg.Person, error) {
-	b, err := c.encodePerson(person)
+	var b []byte
+	err := codec.NewEncoderBytes(&b, c.jsonHandle).Encode(person)
 	if err != nil {
 		return nil, err
 	}
 
-	return c.decodePerson(b)
+	person = nil
+	err = codec.NewDecoderBytes(b, c.jsonHandle).Decode(&person)
+	if err != nil {
+		return nil, err
+	}
+
+	return person, nil
 }
 
 func (c *FakePersonClient) apply(ctx context.Context, partitionkey string, person *pkg.Person, options *Options, isCreate bool) (*pkg.Person, error) {
@@ -128,7 +125,7 @@ func (c *FakePersonClient) apply(ctx context.Context, partitionkey string, perso
 		}
 	}
 
-	b, exists := c.people[person.ID]
+	existingPerson, exists := c.people[person.ID]
 	if isCreate && exists {
 		return nil, &Error{
 			StatusCode: http.StatusConflict,
@@ -140,23 +137,13 @@ func (c *FakePersonClient) apply(ctx context.Context, partitionkey string, perso
 			return nil, &Error{StatusCode: http.StatusNotFound}
 		}
 
-		existingPerson, err := c.decodePerson(b)
-		if err != nil {
-			return nil, err
-		}
-
 		if person.ETag != existingPerson.ETag {
 			return nil, &Error{StatusCode: http.StatusPreconditionFailed}
 		}
 	}
 
 	if c.conflictChecker != nil {
-		for id := range c.people {
-			personToCheck, err := c.decodePerson(c.people[id])
-			if err != nil {
-				return nil, err
-			}
-
+		for _, personToCheck := range c.people {
 			if c.conflictChecker(personToCheck, person) {
 				return nil, &Error{
 					StatusCode: http.StatusConflict,
@@ -169,12 +156,7 @@ func (c *FakePersonClient) apply(ctx context.Context, partitionkey string, perso
 	person.ETag = fmt.Sprint(c.etag)
 	c.etag++
 
-	b, err = c.encodePerson(person)
-	if err != nil {
-		return nil, err
-	}
-
-	c.people[person.ID] = b
+	c.people[person.ID] = person
 
 	return person, nil
 }
@@ -199,12 +181,12 @@ func (c *FakePersonClient) List(*Options) PersonIterator {
 	}
 
 	people := make([]*pkg.Person, 0, len(c.people))
-	for _, d := range c.people {
-		r, err := c.decodePerson(d)
+	for _, person := range c.people {
+		person, err := c.deepCopy(person)
 		if err != nil {
 			return NewFakePersonErroringRawIterator(err)
 		}
-		people = append(people, r)
+		people = append(people, person)
 	}
 
 	if c.sorter != nil {
@@ -234,7 +216,7 @@ func (c *FakePersonClient) Get(ctx context.Context, partitionkey string, id stri
 		return nil, &Error{StatusCode: http.StatusNotFound}
 	}
 
-	return c.decodePerson(person)
+	return c.deepCopy(person)
 }
 
 // Delete deletes a Person from the database
