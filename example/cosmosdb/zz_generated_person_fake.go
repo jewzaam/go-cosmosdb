@@ -21,19 +21,18 @@ var _ PersonClient = &FakePersonClient{}
 // NewFakePersonClient returns a FakePersonClient
 func NewFakePersonClient(h *codec.JsonHandle) *FakePersonClient {
 	return &FakePersonClient{
+		jsonHandle:      h,
 		people:          make(map[string][]byte),
 		triggerHandlers: make(map[string]fakePersonTriggerHandler),
 		queryHandlers:   make(map[string]fakePersonQueryHandler),
-		jsonHandle:      h,
-		lock:            &sync.RWMutex{},
 	}
 }
 
 // FakePersonClient is a FakePersonClient
 type FakePersonClient struct {
-	people          map[string][]byte
+	lock            sync.RWMutex
 	jsonHandle      *codec.JsonHandle
-	lock            *sync.RWMutex
+	people          map[string][]byte
 	triggerHandlers map[string]fakePersonTriggerHandler
 	queryHandlers   map[string]fakePersonQueryHandler
 	sorter          func([]*pkg.Person)
@@ -271,7 +270,9 @@ func (c *FakePersonClient) ChangeFeed(*Options) PersonIterator {
 func (c *FakePersonClient) processPreTriggers(ctx context.Context, person *pkg.Person, options *Options) error {
 	for _, triggerName := range options.PreTriggers {
 		if triggerHandler := c.triggerHandlers[triggerName]; triggerHandler != nil {
+			c.lock.Unlock()
 			err := triggerHandler(ctx, person)
+			c.lock.Lock()
 			if err != nil {
 				return err
 			}
@@ -293,7 +294,10 @@ func (c *FakePersonClient) Query(name string, query *Query, options *Options) Pe
 	}
 
 	if queryHandler := c.queryHandlers[query.Query]; queryHandler != nil {
-		return queryHandler(c, query, options)
+		c.lock.RUnlock()
+		i := queryHandler(c, query, options)
+		c.lock.RLock()
+		return i
 	}
 
 	return NewFakePersonErroringRawIterator(ErrNotImplemented)
