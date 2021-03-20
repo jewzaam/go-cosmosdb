@@ -18,8 +18,8 @@ const (
 	collid    = "people"
 	triggerid = "trigger"
 	personid  = "jim"
-	userid    = "root"
-	permid    = "rootperm"
+	userid    = "reader"
+	permid    = "reader-perm"
 
 	triggerbody = `function trigger() {
 	var request = getContext().getRequest();
@@ -52,10 +52,12 @@ func TestE2E(t *testing.T) {
 		},
 	}
 
-	dbc, err := cosmosdb.NewDatabaseClient(log, http.DefaultClient, jsonHandle, account+".documents.azure.com", key)
+	keyAuthorizer, err := cosmosdb.NewMasterKeyAuthorizer(key)
 	if err != nil {
-		t.Fatal(err)
+		t.Error(err)
 	}
+
+	dbc := cosmosdb.NewDatabaseClient(log, http.DefaultClient, jsonHandle, account+".documents.azure.com", keyAuthorizer)
 
 	db, err := dbc.Create(ctx, &cosmosdb.Database{ID: dbid})
 	if err != nil {
@@ -270,6 +272,16 @@ func TestE2E(t *testing.T) {
 	if docs != nil {
 		t.Error(docs)
 	}
+
+	tokendbc := cosmosdb.NewDatabaseClient(log, http.DefaultClient, jsonHandle, account+".documents.azure.com", cosmosdb.NewTokenAuthorizer(perm.Token))
+	tokencollc := cosmosdb.NewCollectionClient(tokendbc, dbid)
+	tokendc := cosmosdb.NewPersonClient(tokencollc, collid)
+
+	doc, err = tokendc.Get(ctx, personid, personid, nil)
+	if err != nil {
+		t.Error(err)
+	}
+	t.Logf("%#v\n", doc)
 
 	err = permc.Delete(ctx, perm)
 	if err != nil {
