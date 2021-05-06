@@ -1,8 +1,8 @@
-all:
+generate:
 	go generate ./pkg/...
 	go generate ./example/...
 
-test: all
+test: generate
 	go test -count=1 -v ./example
 
-.PHONY: all test
+.PHONY: generate test
