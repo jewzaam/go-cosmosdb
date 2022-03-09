@@ -1,0 +1,15 @@
+# github.com/go-bindata/go-bindata v3.1.2+incompatible
+## explicit
+github.com/go-bindata/go-bindata
+github.com/go-bindata/go-bindata/go-bindata
+# github.com/sirupsen/logrus v1.7.0
+## explicit
+github.com/sirupsen/logrus
+# github.com/ugorji/go/codec v1.2.0
+## explicit
+github.com/ugorji/go/codec
+# golang.org/x/sys v0.0.0-20201116194326-cc9327a14d48
+## explicit
+golang.org/x/sys/internal/unsafeheader
+golang.org/x/sys/unix
+golang.org/x/sys/windows
