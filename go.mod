@@ -1,11 +1,14 @@
 module github.com/jewzaam/go-cosmosdb
 
-go 1.18
+go 1.20
 
 require (
-	github.com/go-bindata/go-bindata v3.1.2+incompatible
 	github.com/sirupsen/logrus v1.7.0
 	github.com/ugorji/go/codec v1.2.12
+
 )
 
-require golang.org/x/sys v0.1.0 // indirect
+require (
+	github.com/stretchr/testify v1.9.0 // indirect
+	golang.org/x/sys v0.21.0 // indirect
+)
