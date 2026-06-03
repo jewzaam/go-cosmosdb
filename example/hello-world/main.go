@@ -78,7 +78,7 @@ func run(ctx context.Context, log *logrus.Entry) error {
 		return err
 	}
 
-	log.Info("database: %#v\n", db)
+	log.Infof("database: %#v\n", db)
 
 	collc := cosmosdb.NewCollectionClient(dbc, dbid)
 
@@ -93,7 +93,7 @@ func run(ctx context.Context, log *logrus.Entry) error {
 	if err != nil && !cosmosdb.IsErrorStatusCode(err, http.StatusConflict) {
 		return err
 	}
-	log.Info("collection: %#v\n", coll)
+	log.Infof("collection: %#v\n", coll)
 
 	// Create persons document client in the collections above
 	dc := cosmosdb.NewPersonClient(collc, collid)
@@ -123,7 +123,7 @@ func run(ctx context.Context, log *logrus.Entry) error {
 
 	// Print back the values
 	for _, person := range docs.People {
-		log.Info("documents: %#v\n", person)
+		log.Infof("documents: %#v\n", person)
 	}
 
 	return nil
